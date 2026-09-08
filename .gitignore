@@ -1,0 +1,20 @@
+# Build and runtime output
+/build/
+/run/
+*.class
+*.jar
+*.log
+*.log.gz
+
+# Local Minecraft and IDE state
+/config/
+/mods/
+/.gradle/
+/.idea/
+/.vscode/
+*.iml
+
+# Operating system files
+.DS_Store
+Thumbs.db
+desktop.ini

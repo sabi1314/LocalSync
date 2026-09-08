@@ -1,0 +1,51 @@
+name: Bug report
+description: Report reproducible LocalSync behavior
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Remove account details, cookies, tokens, and personal paths from logs before attaching them.
+  - type: input
+    id: version
+    attributes:
+      label: LocalSync version
+      placeholder: 1.2.0
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: Minecraft 26.1.2, Fabric Loader 0.19.4, Java 25, WaterMedia 3.0.0.23
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection type
+      options:
+        - Single-player LAN
+        - Dedicated Fabric server
+        - Single player
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      placeholder: List the shortest sequence that reproduces the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and sanitized logs
+    validations:
+      required: true
