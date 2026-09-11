@@ -1,7 +1,9 @@
 package dev.localsync.client;
 
 import dev.localsync.LocalSyncMod;
+import dev.localsync.net.Packets.AdvancePayload;
 import dev.localsync.net.Packets.SnapshotPayload;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import org.watermedia.api.media.MRL;
@@ -9,11 +11,12 @@ import org.watermedia.api.media.MediaAPI;
 import org.watermedia.api.media.players.MediaPlayer;
 
 import java.net.URI;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class PlaybackSession {
-    public enum Phase { IDLE, LOADING, READY, ERROR }
+    public enum Phase { IDLE, LOADING, READY, ADVANCING, ENDED, ERROR }
 
     private static final long RESOLVE_TIMEOUT_MS = 60_000L;
     private static final long DRIFT_THRESHOLD_MS = 1_250L;
@@ -39,6 +42,9 @@ public final class PlaybackSession {
     private long playerCreatedAt;
     private boolean firstVideoFrameLogged;
     private boolean missingFrameWarningLogged;
+    private int advanceGeneration = -1;
+    private int advanceRevision = Integer.MIN_VALUE;
+    private String advanceMediaUrl = "";
 
     private PlaybackSession() {
     }
@@ -53,6 +59,7 @@ public final class PlaybackSession {
         snapshot = new SnapshotPayload(false, false, 0, 0L, "", "");
         phase = Phase.IDLE;
         errorText = "";
+        resetAutoAdvance();
     }
 
     public void accept(SnapshotPayload incoming) {
@@ -67,13 +74,18 @@ public final class PlaybackSession {
             releasePlayer();
             phase = Phase.IDLE;
             errorText = "";
+            resetAutoAdvance();
             return;
         }
 
         boolean changedMedia = !incoming.mediaUrl().equals(previous.mediaUrl());
-        if (changedMedia || player == null && phase != Phase.LOADING) {
+        boolean changedRevision = incoming.revision() != previous.revision();
+        if (changedMedia || player == null && phase != Phase.LOADING && changedRevision) {
             beginResolve(incoming.mediaUrl());
         } else {
+            if (changedRevision) {
+                resumeEndedPlayer(incoming);
+            }
             applyTransportState();
         }
     }
@@ -83,6 +95,7 @@ public final class PlaybackSession {
         releasePlayer();
         phase = Phase.LOADING;
         errorText = "";
+        resetAutoAdvance();
         LocalSyncMod.LOGGER.info("Starting LocalSync media resolution");
 
         RESOLVER.execute(() -> {
@@ -116,8 +129,21 @@ public final class PlaybackSession {
             MediaPlayer created = MediaAPI.createPlayer(mrl,
                 () -> MediaAPI.glEngine(renderThread, client::execute),
                 MediaAPI::alEngine);
+            if (created == null) {
+                throw new IllegalStateException("WaterMedia did not create a player");
+            }
+            created.onStatus((previous, current) -> {
+                if (current == MediaPlayer.Status.ENDED) {
+                    client.execute(() -> handleEnded(taskGeneration, created));
+                }
+            });
+            created.repeat(false);
             created.volume(volume);
-            created.start();
+            if (!created.start()) {
+                created.onStatus(null);
+                created.release();
+                throw new IllegalStateException("WaterMedia rejected the start request");
+            }
             player = created;
             phase = Phase.READY;
             playerCreatedAt = System.currentTimeMillis();
@@ -141,24 +167,30 @@ public final class PlaybackSession {
         }
         releasePlayer();
         phase = Phase.ERROR;
+        resetAutoAdvance();
         errorText = message == null ? "未知错误" : message;
         LocalSyncMod.LOGGER.warn("LocalSync playback error: {}", errorText);
     }
 
     public void tick(Minecraft client) {
-        if (client.level == null || player == null || !snapshot.active()) {
+        MediaPlayer current = player;
+        if (client.level == null || current == null || !snapshot.active()) {
+            return;
+        }
+        if (current.ended()) {
+            handleEnded(generation, current);
             return;
         }
         long now = System.currentTimeMillis();
-        int width = player.width();
-        int height = player.height();
-        long texture = player.texture();
+        int width = current.width();
+        int height = current.height();
+        long texture = current.texture();
         if (!firstVideoFrameLogged && width > 0 && height > 0 && texture > 0L) {
             firstVideoFrameLogged = true;
             LocalSyncMod.LOGGER.info("LocalSync first video frame ready: texture={} size={}x{}",
                 texture, width, height);
         } else if (!missingFrameWarningLogged && now - playerCreatedAt >= 8_000L
-                && player.withVideo() && (width <= 0 || height <= 0 || texture <= 0L)) {
+                && current.withVideo() && (width <= 0 || height <= 0 || texture <= 0L)) {
             missingFrameWarningLogged = true;
             LocalSyncMod.LOGGER.warn(
                 "LocalSync video frame unavailable after 8s: texture={} size={}x{}",
@@ -172,6 +204,95 @@ public final class PlaybackSession {
             lastCorrectionAt = now;
             correct(false);
         }
+    }
+
+    private void handleEnded(int playerGeneration, MediaPlayer endedPlayer) {
+        SnapshotPayload endedState = snapshot;
+        if (playerGeneration != generation || player != endedPlayer
+                || !endedState.active() || endedState.paused() || !endedPlayer.ended()) {
+            return;
+        }
+        int revision = endedState.revision();
+        String mediaUrl = endedState.mediaUrl();
+        if (advanceGeneration == playerGeneration && advanceRevision == revision
+                && advanceMediaUrl.equals(mediaUrl)) {
+            return;
+        }
+        advanceGeneration = playerGeneration;
+        advanceRevision = revision;
+        advanceMediaUrl = mediaUrl;
+        phase = Phase.ADVANCING;
+        errorText = "";
+        LocalSyncMod.LOGGER.info(
+            "LocalSync playback ended at revision {}; resolving auto-advance", revision);
+
+        RESOLVER.execute(() -> {
+            try {
+                Optional<String> next = BilibiliAutoplayResolver.resolveNext(mediaUrl);
+                Minecraft.getInstance().execute(() -> finishAutoAdvance(
+                    playerGeneration, endedPlayer, revision, mediaUrl, next, null));
+            } catch (Throwable error) {
+                Minecraft.getInstance().execute(() -> finishAutoAdvance(
+                    playerGeneration, endedPlayer, revision, mediaUrl,
+                    Optional.empty(), error));
+            }
+        });
+    }
+
+    private void finishAutoAdvance(int playerGeneration, MediaPlayer endedPlayer,
+                                   int revision, String mediaUrl,
+                                   Optional<String> next, Throwable failure) {
+        SnapshotPayload currentState = snapshot;
+        if (playerGeneration != generation || player != endedPlayer
+                || advanceGeneration != playerGeneration || advanceRevision != revision
+                || !advanceMediaUrl.equals(mediaUrl) || !currentState.active()
+                || currentState.revision() != revision
+                || !currentState.mediaUrl().equals(mediaUrl)) {
+            return;
+        }
+        if (failure != null) {
+            phase = Phase.ENDED;
+            errorText = "自动连播失败: " + readable(failure);
+            LocalSyncMod.LOGGER.warn("LocalSync auto-advance resolution failed", failure);
+            return;
+        }
+        if (next.isEmpty() || next.get().equals(mediaUrl)) {
+            phase = Phase.ENDED;
+            errorText = "";
+            LocalSyncMod.LOGGER.info("LocalSync reached the end of the current collection");
+            return;
+        }
+        if (!ClientPlayNetworking.canSend(AdvancePayload.TYPE)) {
+            phase = Phase.ENDED;
+            errorText = "服务器不支持自动连播";
+            return;
+        }
+        ClientPlayNetworking.send(new AdvancePayload(revision, mediaUrl, next.get()));
+        LocalSyncMod.LOGGER.info("Submitted LocalSync auto-advance for revision {}", revision);
+    }
+
+    private void resumeEndedPlayer(SnapshotPayload incoming) {
+        MediaPlayer current = player;
+        if (current == null || !current.ended()) {
+            return;
+        }
+        resetAutoAdvance();
+        phase = Phase.READY;
+        errorText = "";
+        if (incoming.paused()) {
+            return;
+        }
+        try {
+            current.seek(expectedPosition());
+        } catch (Throwable error) {
+            LocalSyncMod.LOGGER.debug("Playback restart after timeline update deferred", error);
+        }
+    }
+
+    private void resetAutoAdvance() {
+        advanceGeneration = -1;
+        advanceRevision = Integer.MIN_VALUE;
+        advanceMediaUrl = "";
     }
 
     private void applyTransportState() {
@@ -197,6 +318,9 @@ public final class PlaybackSession {
             return;
         }
         try {
+            if (current.ended() || current.error() || current.stopped()) {
+                return;
+            }
             long expected = expectedPosition();
             long drift = expected - current.time();
             if (force || Math.abs(drift) >= DRIFT_THRESHOLD_MS) {
@@ -223,6 +347,7 @@ public final class PlaybackSession {
         phase = Phase.IDLE;
         snapshot = new SnapshotPayload(false, false, 0, 0L, "", "");
         errorText = "";
+        resetAutoAdvance();
     }
 
     private void releasePlayer() {
@@ -230,6 +355,7 @@ public final class PlaybackSession {
         player = null;
         if (old != null) {
             try {
+                old.onStatus(null);
                 old.release();
             } catch (Throwable ignored) {
             }
@@ -292,6 +418,12 @@ public final class PlaybackSession {
         }
         if (phase == Phase.LOADING) {
             return "正在解析媒体";
+        }
+        if (phase == Phase.ADVANCING) {
+            return "正在获取下一视频";
+        }
+        if (phase == Phase.ENDED) {
+            return errorText.isBlank() ? "播放结束" : errorText;
         }
         String by = snapshot.actor();
         String base = snapshot.paused() ? "已暂停" : "同步播放中";

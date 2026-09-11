@@ -8,11 +8,6 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import org.watermedia.api.media.players.MediaPlayer;
 
 public final class LocalSyncHud implements HudElement {
-    private static final int BACKGROUND = 0xDD101218;
-    private static final int BACKGROUND_SOFT = 0xB81A1D25;
-    private static final int ACCENT = 0xFFFB7299;
-    private static final int TEXT = 0xFFF4F5F8;
-    private static final int MUTED = 0xFF9CA3AF;
     private static final int ERROR = 0xFFFF7474;
 
     @Override
@@ -43,17 +38,22 @@ public final class LocalSyncHud implements HudElement {
     private static void drawPanel(GuiGraphicsExtractor graphics, Font font,
                                   PlaybackSession session, int width) {
         int height = HudSettings.PANEL_HEIGHT;
-        graphics.fill(0, 0, width, height, BACKGROUND);
-        graphics.fill(0, 0, 3, height, ACCENT);
-        graphics.fill(8, 31, width - 8, 34, BACKGROUND_SOFT);
+        GlassUi.roundedPanel(graphics, 1, 1, width - 2, height - 2, 0xC9161A21);
+        graphics.fillGradient(5, 2, width - 5, 15, 0x28FFFFFF, 0x00FFFFFF);
+        GlassUi.pill(graphics, 8, 7, 8, 8, GlassUi.ACCENT, 0x8AFFFFFF);
+        graphics.fill(9, 8, 15, 9, 0x72FFFFFF);
+        graphics.fill(9, 31, width - 9, 34, 0x88323944);
 
-        String title = font.plainSubstrByWidth(session.displayTitle(), width - 84);
-        graphics.text(font, title, 10, 7, TEXT, false);
+        String title = font.plainSubstrByWidth(session.displayTitle(), width - 36);
+        graphics.text(font, title, 22, 6, GlassUi.TEXT, false);
 
         String status = session.statusText();
-        int statusColor = session.phase() == PlaybackSession.Phase.ERROR ? ERROR : MUTED;
-        status = font.plainSubstrByWidth(status, width - 20);
-        graphics.text(font, status, 10, 19, statusColor, false);
+        int statusColor = session.phase() == PlaybackSession.Phase.ERROR ? ERROR : GlassUi.MUTED;
+        String volume = "VOL " + session.volume();
+        status = font.plainSubstrByWidth(status, width - 30 - font.width(volume));
+        graphics.text(font, status, 10, 18, statusColor, false);
+        graphics.text(font, volume, width - 10 - font.width(volume), 18,
+            GlassUi.MUTED, false);
 
         long elapsed = session.expectedPosition();
         MediaPlayer player = session.player();
@@ -61,14 +61,16 @@ public final class LocalSyncHud implements HudElement {
         double ratio = duration > 0L
             ? Math.min(1.0, (double) elapsed / duration)
             : (System.currentTimeMillis() % 2500L) / 2500.0;
-        int fill = (int) Math.round((width - 16) * ratio);
-        graphics.fill(8, 31, 8 + fill, 34, ACCENT);
+        int fill = (int) Math.round((width - 18) * ratio);
+        if (fill > 0) {
+            graphics.fill(9, 31, 9 + fill, 34, GlassUi.ACCENT);
+            graphics.fill(9, 31, 9 + fill, 32, 0x78FFFFFF);
+        }
 
         String left = LocalSyncCommands.formatTime(elapsed);
         String right = duration > 0L ? LocalSyncCommands.formatTime(duration) : "--:--";
-        String volume = "VOL " + session.volume();
-        graphics.text(font, left, 10, 37, MUTED, false);
-        graphics.text(font, volume, (width - font.width(volume)) / 2, 37, MUTED, false);
-        graphics.text(font, right, width - 10 - font.width(right), 37, MUTED, false);
+        graphics.text(font, left, 10, 37, GlassUi.MUTED, false);
+        graphics.text(font, right, width - 10 - font.width(right), 37,
+            GlassUi.MUTED, false);
     }
 }

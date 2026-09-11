@@ -1,13 +1,14 @@
-# LocalSync 1.2.0
+# LocalSync 1.4.0
 
 LocalSync provides synchronized LAN media playback for Minecraft 26.1.2 Fabric without an external verification server.
 
 ## Highlights
 
-- Search Bilibili from the in-game `P` menu and play a result without leaving Minecraft.
-- Browse covers, titles, creators, durations, play counts, and result pages.
+- Search Bilibili from the in-game `P` menu using the website's default comprehensive ordering.
+- Sign in by QR code or Cookie and browse your favorite folders and videos in game.
+- Continue automatically through multi-page videos and UGC collections, or to a related video.
 - Place a shared video on a selected vertical cinema wall.
-- Move and resize the local playback HUD, including direct preview dragging.
+- Use the rebuilt translucent-glass panel and move or resize the local playback HUD.
 - Preserve synchronized play, pause, seek, resume, stop, and late-join state.
 
 ## Requirements
@@ -22,4 +23,7 @@ LocalSync provides synchronized LAN media playback for Minecraft 26.1.2 Fabric w
 
 Every participating client must install the same LocalSync JAR and dependencies.
 
-SHA-256: `96D01C35DF18E0D343AD3BE3CECC9AFA2988D43A22C0E8023FD680BE64DB42FC`
+WaterMedia dependencies are not bundled because their licenses prohibit redistribution. Account
+cookies remain local to each client and are never included in LAN synchronization packets.
+
+LocalSync JAR SHA-256: `F4E452EE51289D2ECAE23018F89D89C14ECE86F85612058898580DF91B2DA3AA`

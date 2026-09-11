@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "localsync",
-  "version": "1.2.0",
+  "version": "1.4.0",
   "name": "LocalSync 局域网同看",
   "description": "在局域网、单机集成服务器或 Fabric 服务器中同步观看网页视频和收听音频。",
   "authors": ["LocalSync contributors"],
@@ -11,11 +11,15 @@
     "main": ["dev.localsync.LocalSyncMod"],
     "client": ["dev.localsync.client.LocalSyncClient"]
   },
+  "jars": [
+    { "file": "META-INF/jars/zxing-core-3.5.3.jar" }
+  ],
   "depends": {
     "fabricloader": ">=0.19.4",
     "fabric-api": "*",
     "minecraft": "~26.1",
     "java": ">=25",
-    "watermedia": ">=3.0.0.23"
+    "watermedia": ">=3.0.0.23",
+    "watermedia_binaries": ">=3.0.0.6"
   }
 }

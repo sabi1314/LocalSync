@@ -33,6 +33,17 @@ public final class RoomTimeline {
         revision++;
     }
 
+    public boolean advanceIfCurrent(int expectedRevision, String expectedMediaUrl,
+                                    String nextMediaUrl, String by, long now) {
+        if (!active || revision != expectedRevision
+                || !mediaUrl.equals(expectedMediaUrl)
+                || nextMediaUrl == null || nextMediaUrl.isBlank()) {
+            return false;
+        }
+        play(nextMediaUrl, by, now);
+        return true;
+    }
+
     public void pause(String by, long now) {
         if (!active || paused) {
             return;

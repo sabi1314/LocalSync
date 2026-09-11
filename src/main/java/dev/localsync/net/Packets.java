@@ -39,6 +39,28 @@ public final class Packets {
         }
     }
 
+    public record AdvancePayload(int expectedRevision, String expectedMediaUrl,
+                                 String nextMediaUrl) implements CustomPacketPayload {
+        public static final Type<AdvancePayload> TYPE = new Type<>(
+            Identifier.fromNamespaceAndPath("localsync", "advance"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, AdvancePayload> CODEC =
+            StreamCodec.of(
+                (buf, payload) -> {
+                    buf.writeVarInt(payload.expectedRevision());
+                    buf.writeUtf(payload.expectedMediaUrl() == null
+                        ? "" : payload.expectedMediaUrl(), MAX_TEXT);
+                    buf.writeUtf(payload.nextMediaUrl() == null
+                        ? "" : payload.nextMediaUrl(), MAX_TEXT);
+                },
+                buf -> new AdvancePayload(buf.readVarInt(), buf.readUtf(MAX_TEXT),
+                    buf.readUtf(MAX_TEXT)));
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
     public record SnapshotPayload(boolean active, boolean paused, int revision,
                                   long positionMs, String actor, String mediaUrl)
             implements CustomPacketPayload {
@@ -103,6 +125,8 @@ public final class Packets {
     public static void register() {
         PayloadTypeRegistry.serverboundPlay().register(CommandPayload.TYPE,
             CommandPayload.CODEC);
+        PayloadTypeRegistry.serverboundPlay().register(AdvancePayload.TYPE,
+            AdvancePayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(SnapshotPayload.TYPE,
             SnapshotPayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(ScreenPayload.TYPE,

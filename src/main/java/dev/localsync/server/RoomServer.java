@@ -2,6 +2,7 @@ package dev.localsync.server;
 
 import dev.localsync.LocalSyncMod;
 import dev.localsync.net.Packets;
+import dev.localsync.net.Packets.AdvancePayload;
 import dev.localsync.net.Packets.CommandPayload;
 import dev.localsync.net.Packets.SnapshotPayload;
 import dev.localsync.net.Packets.ScreenPayload;
@@ -35,6 +36,9 @@ public final class RoomServer {
     public static void register() {
         ServerPlayNetworking.registerGlobalReceiver(CommandPayload.TYPE, (payload, context) ->
             context.server().execute(() -> handle(context.server(), context.player(), payload)));
+        ServerPlayNetworking.registerGlobalReceiver(AdvancePayload.TYPE, (payload, context) ->
+            context.server().execute(() ->
+                handleAdvance(context.server(), context.player(), payload)));
 
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) ->
             server.execute(() -> {
@@ -157,6 +161,37 @@ public final class RoomServer {
             }
         }
         ticksUntilHeartbeat = HEARTBEAT_TICKS;
+        broadcast(server);
+    }
+
+    private static void handleAdvance(MinecraftServer server, ServerPlayer player,
+                                      AdvancePayload advance) {
+        if (server != activeServer) {
+            activeServer = server;
+            resetRuntime();
+            ScreenPayload persisted = ScreenStore.load(server);
+            if (persisted != null) {
+                screen = persisted;
+            }
+        }
+        String name = player == null ? "?" : player.getGameProfile().name();
+        String candidate = UrlNormalizer.normalize(advance.nextMediaUrl(), MAX_URL_LENGTH);
+        if (candidate == null || candidate.equals(advance.expectedMediaUrl())) {
+            LocalSyncMod.LOGGER.warn("Rejected invalid LocalSync auto-advance from {}", name);
+            send(player);
+            return;
+        }
+        boolean accepted = TIMELINE.advanceIfCurrent(advance.expectedRevision(),
+            advance.expectedMediaUrl(), candidate, name, System.currentTimeMillis());
+        if (!accepted) {
+            LocalSyncMod.LOGGER.debug(
+                "Ignored stale LocalSync auto-advance from {} at revision {}",
+                name, advance.expectedRevision());
+            send(player);
+            return;
+        }
+        ticksUntilHeartbeat = HEARTBEAT_TICKS;
+        LocalSyncMod.LOGGER.info("{} advanced the LocalSync session to the next video", name);
         broadcast(server);
     }
 

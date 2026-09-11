@@ -26,7 +26,29 @@ public final class RoomTimelineTest {
         check(!stopped.active() && stopped.positionMs() == 0L
             && stopped.mediaUrl().isEmpty(), "stop must clear active media");
 
-        System.out.println("PASS RoomTimeline: play/pause/seek/resume/stop");
+        RoomTimeline autoplay = new RoomTimeline();
+        autoplay.reset(20_000L);
+        String current = "https://www.bilibili.com/video/BV1xx411c7mD";
+        String next = "https://www.bilibili.com/video/BV1GJ411x7h7";
+        autoplay.play(current, "host", 21_000L);
+        int expectedRevision = autoplay.state(21_000L).revision();
+        check(!autoplay.advanceIfCurrent(expectedRevision + 1, current, next,
+            "friend", 22_000L), "stale revision must be rejected");
+        check(!autoplay.advanceIfCurrent(expectedRevision, current + "?p=2", next,
+            "friend", 22_000L), "wrong expected URL must be rejected");
+        check(autoplay.advanceIfCurrent(expectedRevision, current, next,
+            "friend", 22_000L), "matching auto-advance must succeed");
+        RoomTimeline.State advanced = autoplay.state(22_000L);
+        check(advanced.revision() == expectedRevision + 1
+                && advanced.positionMs() == 0L && !advanced.paused()
+                && next.equals(advanced.mediaUrl())
+                && "friend".equals(advanced.actor()),
+            "auto-advance must atomically start the next URL");
+        check(!autoplay.advanceIfCurrent(expectedRevision, current, next,
+            "host", 23_000L), "duplicate auto-advance must be rejected");
+
+        System.out.println(
+            "PASS RoomTimeline: transport and compare-and-set auto-advance");
 
         String shared = UrlNormalizer.normalize(
             "【测试视频】 https://b23.tv/AbCd123。 复制本条信息", 8192);

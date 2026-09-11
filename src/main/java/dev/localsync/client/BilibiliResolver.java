@@ -3,17 +3,19 @@ package dev.localsync.client;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpServer;
 import dev.localsync.LocalSyncMod;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.net.SocketException;
 import java.net.URI;
 import java.net.URLEncoder;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -33,8 +35,9 @@ final class BilibiliResolver {
         + "AppleWebKit/537.36 Chrome/131.0 Safari/537.36";
     private static final Pattern BVID = Pattern.compile("(BV[0-9A-Za-z]+)");
     private static final Pattern PAGE = Pattern.compile("(?:[?&])p=(\\d+)");
+    private static final int MAX_PROXY_HEADER_BYTES = 32 * 1024;
     private static final Map<String, URI> SOURCES = new ConcurrentHashMap<>();
-    private static volatile HttpServer proxy;
+    private static volatile MediaProxy proxy;
 
     private BilibiliResolver() {
     }
@@ -47,10 +50,14 @@ final class BilibiliResolver {
     }
 
     static List<SearchResult> searchVideos(String keyword, int page) throws Exception {
+        return parseSearchResults(requestJson(buildSearchUri(keyword, page)));
+    }
+
+    static URI buildSearchUri(String keyword, int page) {
         String query = URLEncoder.encode(keyword, StandardCharsets.UTF_8);
-        URI api = URI.create("https://api.bilibili.com/x/web-interface/wbi/search/type"
-            + "?search_type=video&keyword=" + query + "&page=" + Math.max(1, page));
-        return parseSearchResults(requestJson(api));
+        return URI.create("https://api.bilibili.com/x/web-interface/wbi/search/type"
+            + "?search_type=video&order=totalrank&keyword=" + query
+            + "&page=" + Math.max(1, page));
     }
 
     static List<SearchResult> parseSearchResults(JsonObject root) {
@@ -70,10 +77,21 @@ final class BilibiliResolver {
                 cleanSearchText(value.get("title").getAsString()),
                 value.has("author") ? cleanSearchText(value.get("author").getAsString()) : "",
                 value.has("duration") ? value.get("duration").getAsString() : "--:--",
-                value.has("play") ? Math.max(0L, value.get("play").getAsLong()) : 0L,
+                readPlayCount(value),
                 value.has("pic") ? value.get("pic").getAsString() : ""));
         }
         return List.copyOf(results);
+    }
+
+    private static long readPlayCount(JsonObject value) {
+        if (!value.has("play") || value.get("play").isJsonNull()) {
+            return 0L;
+        }
+        try {
+            return Math.max(0L, value.get("play").getAsLong());
+        } catch (RuntimeException ignored) {
+            return 0L;
+        }
     }
 
     private static String cleanSearchText(String value) {
@@ -103,10 +121,7 @@ final class BilibiliResolver {
         int page = extractPage(expanded);
         long cid = requestCid(bvid, page);
         URI direct = requestDirectMedia(bvid, cid);
-        String id = UUID.randomUUID().toString();
-        SOURCES.put(id, direct);
-        HttpServer server = ensureProxy();
-        String local = "http://127.0.0.1:" + server.getAddress().getPort() + "/media/" + id;
+        String local = createProxyUri(direct).toString();
         LocalSyncMod.LOGGER.info("Resolved Bilibili {} page {} through local media proxy", bvid, page);
         return local;
     }
@@ -114,7 +129,7 @@ final class BilibiliResolver {
     private static URI expandShortLink(URI uri) throws Exception {
         HttpRequest request = HttpRequest.newBuilder(uri)
             .timeout(Duration.ofSeconds(12)).header("User-Agent", USER_AGENT).GET().build();
-        HttpResponse<Void> response = client().send(request, HttpResponse.BodyHandlers.discarding());
+        HttpResponse<Void> response = BilibiliHttp.discard(request, true);
         if (response.statusCode() < 200 || response.statusCode() >= 400) {
             throw new IOException("Bilibili 短链展开失败: HTTP " + response.statusCode());
         }
@@ -169,12 +184,14 @@ final class BilibiliResolver {
     }
 
     private static JsonObject requestJson(URI uri) throws Exception {
-        HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(15))
+        HttpRequest.Builder builder = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(15))
             .header("User-Agent", USER_AGENT)
             .header("Referer", "https://www.bilibili.com/")
-            .header("Origin", "https://www.bilibili.com").GET().build();
-        HttpResponse<String> response = client().send(request,
-            HttpResponse.BodyHandlers.ofString());
+            .header("Origin", "https://www.bilibili.com");
+        BilibiliAccountService.instance().applyAuthentication(builder);
+        HttpRequest request = builder.GET().build();
+        // Authenticated API requests stay on the exact Bilibili endpoint.
+        HttpResponse<String> response = BilibiliHttp.sendString(request, false);
         if (response.statusCode() != 200) {
             throw new IOException("Bilibili API: HTTP " + response.statusCode());
         }
@@ -186,80 +203,221 @@ final class BilibiliResolver {
         return root;
     }
 
-    private static synchronized HttpServer ensureProxy() throws IOException {
+    static URI createProxyUri(URI source) throws IOException {
+        if (source == null || !source.isAbsolute()) {
+            throw new IllegalArgumentException("媒体源地址无效");
+        }
+        MediaProxy server = ensureProxy();
+        String id = UUID.randomUUID().toString();
+        SOURCES.put(id, source);
+        return URI.create("http://127.0.0.1:" + server.port() + "/media/" + id);
+    }
+
+    private static synchronized MediaProxy ensureProxy() throws IOException {
         if (proxy != null) {
             return proxy;
         }
-        HttpServer created = HttpServer.create(new InetSocketAddress(
-            InetAddress.getLoopbackAddress(), 0), 0);
-        created.createContext("/media/", BilibiliResolver::proxyMedia);
-        created.setExecutor(Executors.newCachedThreadPool(task -> {
-            Thread thread = new Thread(task, "localsync-bilibili-proxy");
-            thread.setDaemon(true);
-            return thread;
-        }));
-        created.start();
+        MediaProxy created = new MediaProxy();
         proxy = created;
         return created;
     }
 
-    private static void proxyMedia(HttpExchange exchange) throws IOException {
-        String id = exchange.getRequestURI().getPath().substring("/media/".length());
-        URI source = SOURCES.get(id);
-        if (source == null || !(exchange.getRequestMethod().equals("GET")
-                || exchange.getRequestMethod().equals("HEAD"))) {
-            exchange.sendResponseHeaders(404, -1);
-            exchange.close();
-            return;
-        }
-        try {
+    private static void proxyMedia(Socket socket) {
+        try (socket) {
+            socket.setSoTimeout(30_000);
+            OutputStream output = socket.getOutputStream();
+            ProxyRequest request;
+            try {
+                request = readProxyRequest(socket.getInputStream());
+            } catch (IOException error) {
+                writeSimpleResponse(output, 400);
+                return;
+            }
+            if (!(request.method().equals("GET") || request.method().equals("HEAD"))) {
+                writeSimpleResponse(output, 405);
+                return;
+            }
+            String path = request.path();
+            if (!path.startsWith("/media/")) {
+                writeSimpleResponse(output, 404);
+                return;
+            }
+            String id = path.substring("/media/".length());
+            URI source = SOURCES.get(id);
+            if (source == null) {
+                writeSimpleResponse(output, 404);
+                return;
+            }
+
+            boolean responseStarted = false;
+            try {
             HttpRequest.Builder builder = HttpRequest.newBuilder(source)
                 .timeout(Duration.ofSeconds(30))
                 .header("User-Agent", USER_AGENT)
                 .header("Referer", "https://www.bilibili.com/")
                 .header("Origin", "https://www.bilibili.com");
-            String range = exchange.getRequestHeaders().getFirst("Range");
+            String range = request.range();
             if (range != null && !range.isBlank()) {
                 builder.header("Range", range);
             }
-            builder.method(exchange.getRequestMethod(), HttpRequest.BodyPublishers.noBody());
-            HttpResponse<InputStream> upstream = client().send(builder.build(),
-                HttpResponse.BodyHandlers.ofInputStream());
-            copyHeader(upstream, exchange, "Content-Type");
-            copyHeader(upstream, exchange, "Content-Range");
-            copyHeader(upstream, exchange, "Accept-Ranges");
-            long length = upstream.headers().firstValueAsLong("Content-Length").orElse(0L);
-            boolean head = exchange.getRequestMethod().equals("HEAD");
-            exchange.sendResponseHeaders(upstream.statusCode(), head ? -1L : length);
-            try (InputStream body = upstream.body()) {
-                if (!head) {
-                    body.transferTo(exchange.getResponseBody());
+            builder.method(request.method(), HttpRequest.BodyPublishers.noBody());
+            BilibiliHttp.StreamingResponse upstream =
+                BilibiliHttp.openStream(builder.build(), true);
+            try (upstream) {
+                writeUpstreamResponse(output, upstream);
+                responseStarted = true;
+                if (!request.method().equals("HEAD")) {
+                    upstream.body().transferTo(output);
+                }
+                output.flush();
+            }
+            } catch (Exception error) {
+                if (error instanceof SocketException) {
+                    LocalSyncMod.LOGGER.debug("Bilibili proxy client closed its media probe", error);
+                } else {
+                    LocalSyncMod.LOGGER.warn("Bilibili proxy request failed", error);
+                }
+                if (!responseStarted) {
+                    writeSimpleResponse(output, 502);
                 }
             }
-        } catch (InterruptedException error) {
-            Thread.currentThread().interrupt();
-            exchange.sendResponseHeaders(503, -1);
-        } catch (Exception error) {
-            LocalSyncMod.LOGGER.warn("Bilibili proxy request failed", error);
-            exchange.sendResponseHeaders(502, -1);
-        } finally {
-            exchange.close();
+        } catch (IOException error) {
+            LocalSyncMod.LOGGER.debug("Bilibili proxy client disconnected", error);
         }
     }
 
-    private static void copyHeader(HttpResponse<?> source, HttpExchange target, String name) {
-        source.headers().firstValue(name).ifPresent(value ->
-            target.getResponseHeaders().set(name, value));
+    private static ProxyRequest readProxyRequest(InputStream input) throws IOException {
+        ByteArrayOutputStream header = new ByteArrayOutputStream(1024);
+        int matched = 0;
+        while (header.size() < MAX_PROXY_HEADER_BYTES) {
+            int value = input.read();
+            if (value < 0) throw new IOException("连接在请求头结束前关闭");
+            header.write(value);
+            matched = switch (matched) {
+                case 0 -> value == '\r' ? 1 : 0;
+                case 1 -> value == '\n' ? 2 : value == '\r' ? 1 : 0;
+                case 2 -> value == '\r' ? 3 : 0;
+                case 3 -> value == '\n' ? 4 : 0;
+                default -> matched;
+            };
+            if (matched == 4) break;
+        }
+        if (matched != 4) throw new IOException("代理请求头过大");
+        String[] lines = header.toString(StandardCharsets.ISO_8859_1).split("\\r\\n");
+        if (lines.length == 0) throw new IOException("代理请求为空");
+        String[] requestLine = lines[0].split(" ", 3);
+        if (requestLine.length != 3) throw new IOException("代理请求行无效");
+        String method = requestLine[0].toUpperCase(Locale.ROOT);
+        String target = requestLine[1];
+        String path;
+        try {
+            URI targetUri = URI.create(target);
+            int query = target.indexOf('?');
+            path = targetUri.isAbsolute() ? targetUri.getPath()
+                : query >= 0 ? target.substring(0, query) : target;
+        } catch (RuntimeException error) {
+            throw new IOException("代理请求地址无效", error);
+        }
+        String range = null;
+        for (int index = 1; index < lines.length; index++) {
+            int separator = lines[index].indexOf(':');
+            if (separator > 0 && lines[index].substring(0, separator)
+                    .trim().equalsIgnoreCase("Range")) {
+                range = lines[index].substring(separator + 1).trim();
+            }
+        }
+        return new ProxyRequest(method, path, range);
     }
 
-    private static HttpClient client() {
-        return ClientHolder.CLIENT;
+    private static void writeUpstreamResponse(OutputStream output,
+                                              BilibiliHttp.StreamingResponse upstream)
+            throws IOException {
+        StringBuilder header = new StringBuilder(256)
+            .append("HTTP/1.1 ").append(upstream.statusCode()).append(' ')
+            .append(reason(upstream.statusCode())).append("\r\n");
+        appendHeader(header, upstream, "Content-Type");
+        appendHeader(header, upstream, "Content-Range");
+        appendHeader(header, upstream, "Accept-Ranges");
+        appendHeader(header, upstream, "Content-Length");
+        header.append("Connection: close\r\n\r\n");
+        output.write(header.toString().getBytes(StandardCharsets.ISO_8859_1));
+        output.flush();
     }
 
-    private static final class ClientHolder {
-        private static final HttpClient CLIENT = HttpClient.newBuilder()
-            .followRedirects(HttpClient.Redirect.ALWAYS)
-            .connectTimeout(Duration.ofSeconds(12))
-            .build();
+    private static void appendHeader(StringBuilder target,
+                                     BilibiliHttp.StreamingResponse source,
+                                     String name) {
+        source.headers().firstValue(name).ifPresent(value -> target.append(name)
+            .append(": ").append(value.replace("\r", "").replace("\n", ""))
+            .append("\r\n"));
+    }
+
+    private static void writeSimpleResponse(OutputStream output, int status) throws IOException {
+        String response = "HTTP/1.1 " + status + " " + reason(status) + "\r\n"
+            + "Content-Length: 0\r\nConnection: close\r\n\r\n";
+        output.write(response.getBytes(StandardCharsets.ISO_8859_1));
+        output.flush();
+    }
+
+    private static String reason(int status) {
+        return switch (status) {
+            case 200 -> "OK";
+            case 206 -> "Partial Content";
+            case 400 -> "Bad Request";
+            case 403 -> "Forbidden";
+            case 404 -> "Not Found";
+            case 405 -> "Method Not Allowed";
+            case 416 -> "Range Not Satisfiable";
+            case 500 -> "Internal Server Error";
+            case 502 -> "Bad Gateway";
+            default -> "Upstream Response";
+        };
+    }
+
+    private record ProxyRequest(String method, String path, String range) {
+    }
+
+    private static final class MediaProxy {
+        private final ServerSocket server;
+        private final java.util.concurrent.ExecutorService workers;
+
+        private MediaProxy() throws IOException {
+            server = new ServerSocket();
+            server.setReuseAddress(true);
+            server.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 32);
+            workers = Executors.newCachedThreadPool(task -> {
+                Thread thread = new Thread(task, "localsync-bilibili-proxy-worker");
+                thread.setDaemon(true);
+                return thread;
+            });
+            Thread acceptor = new Thread(this::acceptLoop, "localsync-bilibili-proxy-accept");
+            acceptor.setDaemon(true);
+            acceptor.start();
+        }
+
+        private int port() {
+            return server.getLocalPort();
+        }
+
+        private void acceptLoop() {
+            while (!server.isClosed()) {
+                try {
+                    Socket client = server.accept();
+                    try {
+                        workers.execute(() -> proxyMedia(client));
+                    } catch (RuntimeException error) {
+                        client.close();
+                        throw error;
+                    }
+                } catch (SocketException error) {
+                    if (!server.isClosed()) {
+                        LocalSyncMod.LOGGER.warn("Bilibili proxy listener failed", error);
+                    }
+                    return;
+                } catch (Exception error) {
+                    LocalSyncMod.LOGGER.warn("Bilibili proxy could not accept a client", error);
+                }
+            }
+        }
     }
 }

@@ -1,5 +1,10 @@
 # Third-party notices
 
+WaterMedia and WaterMedia: Binaries are runtime dependencies and are not redistributed
+inside LocalSync. They are licensed separately under the PolyForm Strict License 1.0.0:
+https://github.com/WaterMediaTeam/watermedia/blob/2.1.x/LICENSE.md
+https://github.com/WaterMediaTeam/binaries/blob/main/LICENSE.md
+
 LocalSync's Bilibili URL handling was informed by Bilibili Media - KOTS:
 https://github.com/GLDYM/Bilibili-Media-Mod
 
@@ -24,3 +29,12 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+
+ZXing Core 3.5.3 is bundled for QR code generation:
+https://github.com/zxing/zxing
+Maven coordinate: com.google.zxing:core:3.5.3
+
+Copyright 2007 ZXing authors
+
+Licensed under the Apache License, Version 2.0. The complete license text is
+included as `LICENSE_zxing-Apache-2.0.txt` in the LocalSync distribution.
