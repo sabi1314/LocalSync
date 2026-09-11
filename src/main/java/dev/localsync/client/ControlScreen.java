@@ -935,12 +935,19 @@ public final class ControlScreen extends Screen {
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX,
                                    int mouseY, float partialTick) {
         graphics.fillGradient(0, 0, width, height, BACKDROP_TOP, BACKDROP_BOTTOM);
-        GlassUi.roundedPanel(graphics, panelX + 3, panelY + 5,
-            panelWidth, panelHeight, 0x66000000);
-        GlassUi.roundedPanel(graphics, panelX, panelY,
-            panelWidth, panelHeight, GlassUi.PANEL);
-        graphics.fillGradient(panelX + 5, panelY + 1,
-            panelX + panelWidth - 5, panelY + 58, 0x26FFFFFF, 0x00FFFFFF);
+        boolean liquidGlass = ReGlassCompat.renderSurface(graphics,
+            panelX, panelY, panelWidth, panelHeight, 14f, false, false);
+        if (!liquidGlass) {
+            GlassUi.roundedPanel(graphics, panelX + 3, panelY + 5,
+                panelWidth, panelHeight, 0x66000000);
+            GlassUi.roundedPanel(graphics, panelX, panelY,
+                panelWidth, panelHeight, GlassUi.PANEL);
+            graphics.fillGradient(panelX + 5, panelY + 1,
+                panelX + panelWidth - 5, panelY + 58, 0x26FFFFFF, 0x00FFFFFF);
+        } else {
+            graphics.fillGradient(panelX + 14, panelY + 1,
+                panelX + panelWidth - 14, panelY + 50, 0x12FFFFFF, 0x00FFFFFF);
+        }
         graphics.text(font, "LocalSync", panelX + EDGE, panelY + 14,
             GlassUi.TEXT, false);
         GlassUi.pill(graphics, panelX + EDGE, panelY + 27, 46, 3,
@@ -1030,8 +1037,11 @@ public final class ControlScreen extends Screen {
         int rowY = listY + row * ROW_HEIGHT;
         boolean hovered = inside(mouseX, mouseY, listX, rowY,
             listWidth, ROW_HEIGHT - 4);
-        GlassUi.roundedPanel(graphics, listX, rowY,
-            listWidth, ROW_HEIGHT - 4, hovered ? ROW_HOVER : ROW);
+        if (!ReGlassCompat.renderSurface(graphics, listX, rowY,
+                listWidth, ROW_HEIGHT - 4, 8f, hovered, false)) {
+            GlassUi.roundedPanel(graphics, listX, rowY,
+                listWidth, ROW_HEIGHT - 4, hovered ? ROW_HOVER : ROW);
+        }
         Identifier cover = BilibiliCoverCache.getOrRequest(cacheKey, coverUrl);
         if (cover != null) {
             graphics.blit(cover, listX + 4, rowY + 3,
@@ -1188,10 +1198,14 @@ public final class ControlScreen extends Screen {
 
     private void drawInputShell(GuiGraphicsExtractor graphics, int x, int y,
                                 int width, int height) {
-        GlassUi.pill(graphics, x, y, Math.max(1, width), height,
-            0xB1262B34, GlassUi.BORDER);
-        graphics.horizontalLine(x + 5, x + Math.max(6, width - 6), y + 1,
-            0x2EFFFFFF);
+        int actualWidth = Math.max(1, width);
+        if (!ReGlassCompat.renderSurface(graphics, x, y, actualWidth, height,
+                height * 0.5f, false, false)) {
+            GlassUi.pill(graphics, x, y, actualWidth, height,
+                0xB1262B34, GlassUi.BORDER);
+            graphics.horizontalLine(x + 5, x + Math.max(6, width - 6), y + 1,
+                0x2EFFFFFF);
+        }
     }
 
     private void drawNotice(GuiGraphicsExtractor graphics) {

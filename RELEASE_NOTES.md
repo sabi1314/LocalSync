@@ -9,7 +9,7 @@ LocalSync provides synchronized LAN media playback for Minecraft 26.1.2 Fabric w
 - Continue automatically through multi-page videos and UGC collections, or to a related video.
 - Place a shared video on a selected vertical cinema wall.
 - Request the highest Bilibili quality available to the current account and render it with maximum WaterMedia LOD and smooth linear scaling.
-- Use ReGlass 2.0's native Liquid Glass shader for the playback HUD when the optional mod is installed.
+- Use ReGlass 2.0's native Liquid Glass shader across the complete `P` control center, its controls and result rows, and the playback HUD.
 - Keep the playback HUD below other HUD elements and hide it while menus are open, preventing JEI overlap.
 - Move or resize the local playback HUD and preview the same ReGlass effect in settings.
 - Preserve synchronized play, pause, seek, resume, stop, and late-join state.
@@ -29,11 +29,11 @@ Every participating client must install the same LocalSync JAR and dependencies.
 WaterMedia dependencies are not bundled because their licenses prohibit redistribution. Account
 cookies remain local to each client and are never included in LAN synchronization packets.
 
-ReGlass 2.0 is optional. LocalSync calls its public API when present and falls back to its own HUD
-background when absent; no ReGlass classes or shaders are bundled.
+ReGlass 2.0 is optional. LocalSync calls its public API when present and falls back to its own
+control-center and HUD backgrounds when absent; no ReGlass classes or shaders are bundled.
 
 Bilibili still decides the delivered resolution from the source video and the signed-in account's
 permissions. LocalSync requests the maximum available tier, including 4K, but does not upscale a
 lower-resolution source.
 
-LocalSync JAR SHA-256: `2A789F70DD0565B8F11B1A91DB5528AF7FFF8F5F59AFF1228139FC989F06388C`
+LocalSync JAR SHA-256: `57877828D3E1461675A12EEE4392F7A86FF365C58CD9DE614F3B5B91E6E3AD43`

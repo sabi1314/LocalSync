@@ -7,6 +7,7 @@ All notable changes to LocalSync are documented here. Versions follow semantic v
 ### Added
 
 - Optional runtime integration with the public ReGlass 2.0 API for a native liquid-glass playback HUD.
+- The complete `P` control center, its custom controls and result rows use the same native ReGlass renderer as the playback HUD.
 - The HUD layout preview uses the same ReGlass renderer as the in-game playback panel.
 
 ### Changed

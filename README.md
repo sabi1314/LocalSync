@@ -16,7 +16,7 @@ LocalSync 是独立实现的局域网同步媒体模组。房主打开单人世�
 - 支持普通媒体链接、Bilibili 视频页、分 P、分享文案和 `b23.tv` 短链。
 - 视频结束后自动播放下一分 P、合集下一集或相关推荐视频。
 - 每位玩家可以独立调整播放状态栏的位置、宽度和缩放。
-- `P` 面板使用半透明玻璃风格；安装 ReGlass 2.0 后，播放状态 HUD 使用其原生 Liquid Glass shader。
+- 安装 ReGlass 2.0 后，整个 `P` 控制中心和播放状态 HUD 都使用其原生 Liquid Glass shader。
 - 局域网集成服务器和 Fabric 专用服务器均不依赖外部验证服务。
 
 ## 安装
@@ -31,8 +31,8 @@ LocalSync 是独立实现的局域网同步媒体模组。房主打开单人世�
 - `watermedia_binaries-3.0.0.6.jar`
 - `fabric-language-kotlin-1.13.12+kotlin.2.4.0.jar`
 
-可选安装 `reglass-26.1-2.0.jar`。LocalSync 会通过 ReGlass 的公开 API 渲染真正的
-Liquid Glass HUD；没有 ReGlass 时自动使用内置 fallback，不影响播放功能。
+可选安装 `reglass-26.1-2.0.jar`。LocalSync 会通过 ReGlass 的公开 API 渲染整个控制中心、
+控件、结果列表和播放状态栏；没有 ReGlass 时自动使用内置 fallback，不影响播放功能。
 
 本模组未使用 LanCine 的代码或资源。它可以与 NekoVideo 并存，但不会调用 NekoVideo
 的服务器或协议。

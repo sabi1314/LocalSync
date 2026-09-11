@@ -24,6 +24,9 @@ final class GlassButton extends AbstractWidget {
     protected void extractWidgetRenderState(GuiGraphicsExtractor graphics, int mouseX,
                                             int mouseY, float partialTick) {
         boolean highlighted = active && isHoveredOrFocused();
+        boolean liquidGlass = active && ReGlassCompat.renderSurface(
+            graphics, getX(), getY(), getWidth(), getHeight(),
+            getHeight() * 0.5f, highlighted, accented);
         int fill;
         int border;
         if (!active) {
@@ -36,7 +39,9 @@ final class GlassButton extends AbstractWidget {
             fill = highlighted ? 0xC43B424E : 0x92303640;
             border = highlighted ? 0x72FFFFFF : 0x34FFFFFF;
         }
-        GlassUi.pill(graphics, getX(), getY(), getWidth(), getHeight(), fill, border);
+        if (!liquidGlass) {
+            GlassUi.pill(graphics, getX(), getY(), getWidth(), getHeight(), fill, border);
+        }
         int color = active ? GlassUi.TEXT : 0xFF747B86;
         var font = Minecraft.getInstance().font;
         String label = font.plainSubstrByWidth(getMessage().getString(),
