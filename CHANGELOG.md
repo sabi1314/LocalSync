@@ -2,6 +2,26 @@
 
 All notable changes to LocalSync are documented here. Versions follow semantic versioning.
 
+## [1.4.2] - 2026-09-11
+
+### Added
+
+- Optional runtime integration with the public ReGlass 2.0 API for a native liquid-glass playback HUD.
+- The HUD layout preview uses the same ReGlass renderer as the in-game playback panel.
+
+### Changed
+
+- Registered the playback panel at the bottom of Fabric's HUD layer order instead of appending it last.
+- Kept ReGlass optional through an isolated runtime bridge; its classes and shaders are not bundled.
+- Request the highest Bilibili quality available to the current account and source, including the 4K capability flag.
+- Set WaterMedia to its maximum media quality and decode LOD before playback starts.
+- Use linear clamp-to-edge sampling for the world video texture instead of Minecraft's pixelated nearest-neighbor default.
+
+### Fixed
+
+- Hide the playback HUD while inventory, container, and other screens are open so it cannot cover JEI overlays.
+- Respect Minecraft's hide-GUI option when rendering the playback HUD.
+
 ## [1.4.0] - 2026-09-11
 
 ### Added

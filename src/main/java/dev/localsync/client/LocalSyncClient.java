@@ -61,7 +61,7 @@ public final class LocalSyncClient implements ClientModInitializer {
         });
 
         LocalSyncCommands.register();
-        HudElementRegistry.addLast(
+        HudElementRegistry.addFirst(
             Identifier.fromNamespaceAndPath("localsync", "session_panel"),
             new LocalSyncHud());
         LevelRenderEvents.COLLECT_SUBMITS.register(VideoOverlay::renderWorld);

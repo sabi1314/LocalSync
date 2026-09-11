@@ -18,28 +18,38 @@ public final class LocalSyncHud implements HudElement {
         }
 
         Minecraft client = Minecraft.getInstance();
+        if (client.options.hideGui || client.screen != null) {
+            return;
+        }
         Font font = client.font;
         HudSettings settings = HudSettings.instance();
         int width = settings.effectiveWidth(graphics.guiWidth());
         float scale = (float) settings.scale();
         int x = settings.screenX(graphics.guiWidth(), width);
         int y = settings.screenY(graphics.guiHeight());
+        int actualWidth = (int) Math.ceil(width * scale);
+        int actualHeight = (int) Math.ceil(HudSettings.PANEL_HEIGHT * scale);
+        boolean liquidGlass = ReGlassCompat.renderPanel(
+            graphics, x, y, actualWidth, actualHeight);
 
         graphics.pose().pushMatrix();
         graphics.pose().translate(x, y);
         graphics.pose().scale(scale, scale);
         try {
-            drawPanel(graphics, font, session, width);
+            drawPanel(graphics, font, session, width, liquidGlass);
         } finally {
             graphics.pose().popMatrix();
         }
     }
 
     private static void drawPanel(GuiGraphicsExtractor graphics, Font font,
-                                  PlaybackSession session, int width) {
+                                  PlaybackSession session, int width,
+                                  boolean liquidGlass) {
         int height = HudSettings.PANEL_HEIGHT;
-        GlassUi.roundedPanel(graphics, 1, 1, width - 2, height - 2, 0xC9161A21);
-        graphics.fillGradient(5, 2, width - 5, 15, 0x28FFFFFF, 0x00FFFFFF);
+        if (!liquidGlass) {
+            GlassUi.roundedPanel(graphics, 1, 1, width - 2, height - 2, 0xC9161A21);
+            graphics.fillGradient(5, 2, width - 5, 15, 0x28FFFFFF, 0x00FFFFFF);
+        }
         GlassUi.pill(graphics, 8, 7, 8, 8, GlassUi.ACCENT, 0x8AFFFFFF);
         graphics.fill(9, 8, 15, 9, 0x72FFFFFF);
         graphics.fill(9, 31, width - 9, 34, 0x88323944);

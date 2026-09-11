@@ -1,17 +1,17 @@
 # Release verification
 
-## LocalSync 1.4.0
+## LocalSync 1.4.2
 
-Expected SHA-256 for `localsync-1.4.0.jar`:
+Expected SHA-256 for `localsync-1.4.2.jar`:
 
 ```text
-F4E452EE51289D2ECAE23018F89D89C14ECE86F85612058898580DF91B2DA3AA
+2A789F70DD0565B8F11B1A91DB5528AF7FFF8F5F59AFF1228139FC989F06388C
 ```
 
 Verify the downloaded JAR on Windows:
 
 ```powershell
-Get-FileHash .\localsync-1.4.0.jar -Algorithm SHA256
+Get-FileHash .\localsync-1.4.2.jar -Algorithm SHA256
 ```
 
 Build and run the complete offline test suite from this source tree:

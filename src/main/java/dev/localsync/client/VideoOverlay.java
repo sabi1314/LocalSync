@@ -2,6 +2,7 @@ package dev.localsync.client;
 
 import com.mojang.blaze3d.opengl.GlTexture;
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import dev.localsync.LocalSyncMod;
@@ -120,7 +121,7 @@ public final class VideoOverlay {
         if (mirrorTexture != null) {
             client.getTextureManager().release(VIDEO_TEXTURE);
         }
-        mirrorTexture = new DynamicTexture("LocalSync video mirror", width, height, false);
+        mirrorTexture = new LinearVideoTexture(width, height);
         mirrorWidth = width;
         mirrorHeight = height;
         client.getTextureManager().register(VIDEO_TEXTURE, mirrorTexture);
@@ -134,6 +135,13 @@ public final class VideoOverlay {
             throw new IllegalStateException("Minecraft OpenGL mirror texture is unavailable");
         }
         return texture.glId();
+    }
+
+    private static final class LinearVideoTexture extends DynamicTexture {
+        private LinearVideoTexture(int width, int height) {
+            super("LocalSync video mirror", width, height, false);
+            sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
+        }
     }
 
     private static void submitScreen(LevelRenderContext context, ScreenPayload screen,

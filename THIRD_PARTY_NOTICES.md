@@ -38,3 +38,7 @@ Copyright 2007 ZXing authors
 
 Licensed under the Apache License, Version 2.0. The complete license text is
 included as `LICENSE_zxing-Apache-2.0.txt` in the LocalSync distribution.
+
+ReGlass 2.0 is an optional runtime integration used through its public API and is not
+redistributed inside LocalSync. ReGlass is licensed under the MIT License:
+https://github.com/RedxAx/ReGlass

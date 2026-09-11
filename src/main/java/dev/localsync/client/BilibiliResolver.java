@@ -172,8 +172,7 @@ final class BilibiliResolver {
     }
 
     private static URI requestDirectMedia(String bvid, long cid) throws Exception {
-        URI api = URI.create("https://api.bilibili.com/x/player/wbi/playurl?bvid=" + bvid
-            + "&cid=" + cid + "&qn=116&otype=json&platform=html5&high_quality=1");
+        URI api = buildPlayUrlUri(bvid, cid);
         JsonObject root = requestJson(api);
         JsonObject data = root.getAsJsonObject("data");
         JsonArray durl = data == null ? null : data.getAsJsonArray("durl");
@@ -181,6 +180,12 @@ final class BilibiliResolver {
             throw new IOException("Bilibili 没有返回可播放地址");
         }
         return URI.create(durl.get(0).getAsJsonObject().get("url").getAsString());
+    }
+
+    static URI buildPlayUrlUri(String bvid, long cid) {
+        return URI.create("https://api.bilibili.com/x/player/wbi/playurl?bvid=" + bvid
+            + "&cid=" + cid + "&qn=127&otype=json&platform=html5"
+            + "&high_quality=1&fourk=1");
     }
 
     private static JsonObject requestJson(URI uri) throws Exception {

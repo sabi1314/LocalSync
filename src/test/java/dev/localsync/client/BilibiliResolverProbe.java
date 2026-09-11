@@ -26,6 +26,13 @@ public final class BilibiliResolverProbe {
                 "https://www.bilibili.com/video/BV1xx411c7mD?p=3")) != 3) {
             throw new AssertionError("page parser failed");
         }
+        URI playUrl = BilibiliResolver.buildPlayUrlUri("BV1xx411c7mD", 12345L);
+        String playQuery = playUrl.getRawQuery();
+        if (!playQuery.contains("qn=127")
+                || !playQuery.contains("high_quality=1")
+                || !playQuery.contains("fourk=1")) {
+            throw new AssertionError("maximum-quality play query failed: " + playUrl);
+        }
         URI searchUri = BilibiliResolver.buildSearchUri("Minecraft 联机", 0);
         String searchQuery = searchUri.getRawQuery();
         if (!searchQuery.contains("search_type=video")

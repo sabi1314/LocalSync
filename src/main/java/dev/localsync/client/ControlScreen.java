@@ -1081,8 +1081,12 @@ public final class ControlScreen extends Screen {
         }
         GlassUi.roundedPanel(graphics, previewX, previewY,
             previewWidth, previewHeight, 0xA3090C11);
-        GlassUi.roundedPanel(graphics, sampleX, sampleY,
-            sampleWidth, sampleHeight, 0xD51A1E26);
+        boolean liquidGlass = ReGlassCompat.renderPanel(
+            graphics, sampleX, sampleY, sampleWidth, sampleHeight);
+        if (!liquidGlass) {
+            GlassUi.roundedPanel(graphics, sampleX, sampleY,
+                sampleWidth, sampleHeight, 0xD51A1E26);
+        }
         if (sampleHeight >= 18) {
             GlassUi.pill(graphics, sampleX + 6, sampleY + 5,
                 Math.min(7, sampleHeight - 8), Math.min(7, sampleHeight - 8),

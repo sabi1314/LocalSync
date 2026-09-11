@@ -9,6 +9,7 @@ import net.minecraft.network.chat.Component;
 import org.watermedia.api.media.MRL;
 import org.watermedia.api.media.MediaAPI;
 import org.watermedia.api.media.players.MediaPlayer;
+import org.watermedia.api.util.MediaQuality;
 
 import java.net.URI;
 import java.util.Optional;
@@ -139,6 +140,8 @@ public final class PlaybackSession {
             });
             created.repeat(false);
             created.volume(volume);
+            created.quality(MediaQuality.Q8K);
+            created.lod(MediaPlayer.LodLevel.MAX);
             if (!created.start()) {
                 created.onStatus(null);
                 created.release();
