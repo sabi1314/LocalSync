@@ -2,6 +2,7 @@ package dev.localsync.client;
 
 import dev.localsync.net.Packets.CommandPayload;
 import dev.localsync.net.Packets.SnapshotPayload;
+import dev.localsync.net.Packets.QueuePayload;
 import dev.localsync.net.Packets.ScreenPayload;
 import dev.localsync.LocalSyncMod;
 import com.mojang.blaze3d.platform.InputConstants;
@@ -29,12 +30,17 @@ public final class LocalSyncClient implements ClientModInitializer {
 
         ClientPlayNetworking.registerGlobalReceiver(SnapshotPayload.TYPE,
             (payload, context) -> context.client().execute(() -> session.accept(payload)));
+        ClientPlayNetworking.registerGlobalReceiver(QueuePayload.TYPE,
+            (payload, context) -> context.client().execute(() ->
+                QueueState.instance().accept(payload)));
         ClientPlayNetworking.registerGlobalReceiver(ScreenPayload.TYPE,
             (payload, context) -> context.client().execute(() ->
                 ScreenState.instance().accept(payload)));
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) ->
             client.execute(() -> {
                 session.onJoin();
+                QueueState.instance().clear();
+                OfflineScreenState.instance().refreshScope(client);
                 if (ClientPlayNetworking.canSend(CommandPayload.TYPE)) {
                     ClientPlayNetworking.send(new CommandPayload(6, 0L, ""));
                 }
@@ -42,6 +48,8 @@ public final class LocalSyncClient implements ClientModInitializer {
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) ->
             client.execute(() -> {
                 session.close();
+                QueueState.instance().clear();
+                OfflinePlaybackSession.instance().close();
                 VideoOverlay.release();
                 BilibiliCoverCache.release();
                 ScreenState.instance().clearLocal();
@@ -51,6 +59,8 @@ public final class LocalSyncClient implements ClientModInitializer {
             GLFW.GLFW_KEY_P, CATEGORY));
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             session.tick(client);
+            OfflineScreenState.instance().refreshScope(client);
+            OfflinePlaybackSession.instance().tick(client);
             while (openControls.consumeClick()) {
                 openScreenNextTick = true;
             }

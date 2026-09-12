@@ -5,6 +5,7 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import dev.localsync.net.Packets;
 import dev.localsync.net.Packets.CommandPayload;
+import dev.localsync.net.Packets.QueueAddPayload;
 import dev.localsync.LocalSyncMod;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
@@ -56,7 +57,7 @@ public final class LocalSyncCommands {
                 .then(ClientCommands.literal("pos2")
                     .executes(context -> selectCorner(context.getSource(), Packets.SCREEN_POS2)))
                 .then(ClientCommands.literal("clear")
-                    .executes(context -> send(context.getSource(), Packets.SCREEN_CLEAR, 0L, "")));
+                    .executes(context -> clearPublicScreen(context.getSource())));
             root.then(screen);
             root.then(ClientCommands.literal("volume")
                 .then(ClientCommands.argument("value", IntegerArgumentType.integer(0, 100))
@@ -112,6 +113,15 @@ public final class LocalSyncCommands {
         return true;
     }
 
+    static boolean queueMedia(String url, String title) {
+        if (!ClientPlayNetworking.canSend(QueueAddPayload.TYPE)) {
+            return false;
+        }
+        ClientPlayNetworking.send(new QueueAddPayload(url == null ? "" : url,
+            title == null ? "" : title));
+        return true;
+    }
+
     static boolean selectLookedAtCorner(int action) {
         Minecraft client = Minecraft.getInstance();
         if (!(client.hitResult instanceof BlockHitResult hit)
@@ -124,6 +134,18 @@ public final class LocalSyncCommands {
         String value = dimension + "|" + pos.getX() + "|" + pos.getY() + "|"
             + pos.getZ() + "|" + hit.getDirection().get3DDataValue();
         return sendAction(action, 0L, value);
+    }
+
+    static boolean clearPublicScreen() {
+        return sendAction(Packets.SCREEN_CLEAR, 0L, "");
+    }
+
+    private static int clearPublicScreen(FabricClientCommandSource source) {
+        if (!clearPublicScreen()) {
+            source.sendError(Component.literal("§c当前世界未加载 LocalSync 服务端"));
+            return 0;
+        }
+        return 1;
     }
 
     private static int selectCorner(FabricClientCommandSource source, int action) {

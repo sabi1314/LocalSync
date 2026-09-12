@@ -1,4 +1,4 @@
-# LocalSync 1.4.2
+# LocalSync 1.5.2
 
 LocalSync provides synchronized LAN media playback for Minecraft 26.1.2 Fabric without an external verification server.
 
@@ -7,12 +7,17 @@ LocalSync provides synchronized LAN media playback for Minecraft 26.1.2 Fabric w
 - Search Bilibili from the in-game `P` menu using the website's default comprehensive ordering.
 - Sign in by QR code or Cookie and browse your favorite folders and videos in game.
 - Continue automatically through multi-page videos and UGC collections, or to a related video.
+- Queue requests from multiple players in FIFO order; manual and automatic next playback consume the queue first.
+- Create a private per-player screen whose video, audio, placement, and controls stay on that client.
+- Search and play Bilibili live rooms in shared or private mode with bounded reconnect handling.
 - Place a shared video on a selected vertical cinema wall.
 - Request the highest Bilibili quality available to the current account and render it with maximum WaterMedia LOD and smooth linear scaling.
 - Use ReGlass 2.0's native Liquid Glass shader across the complete `P` control center, its controls and result rows, and the playback HUD.
 - Keep the playback HUD below other HUD elements and hide it while menus are open, preventing JEI overlap.
 - Move or resize the local playback HUD and preview the same ReGlass effect in settings.
 - Preserve synchronized play, pause, seek, resume, stop, and late-join state.
+- Preserve search state and reopen the last closed available public/private control center.
+- Distinguish slow first-frame loading from confirmed playback failure.
 
 ## Requirements
 
@@ -36,4 +41,4 @@ Bilibili still decides the delivered resolution from the source video and the si
 permissions. LocalSync requests the maximum available tier, including 4K, but does not upscale a
 lower-resolution source.
 
-LocalSync JAR SHA-256: `57877828D3E1461675A12EEE4392F7A86FF365C58CD9DE614F3B5B91E6E3AD43`
+LocalSync JAR SHA-256: `AAF44A7515E68265BEB7A0F3328A14C23F25B5FDB541C249744D8F8A09E54CA8`

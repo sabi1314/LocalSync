@@ -65,10 +65,11 @@ public final class LocalSyncHud implements HudElement {
         graphics.text(font, volume, width - 10 - font.width(volume), 18,
             GlassUi.MUTED, false);
 
+        boolean live = session.live();
         long elapsed = session.expectedPosition();
         MediaPlayer player = session.player();
-        long duration = player == null ? 0L : Math.max(0L, player.duration());
-        double ratio = duration > 0L
+        long duration = live || player == null ? 0L : Math.max(0L, player.duration());
+        double ratio = !live && duration > 0L
             ? Math.min(1.0, (double) elapsed / duration)
             : (System.currentTimeMillis() % 2500L) / 2500.0;
         int fill = (int) Math.round((width - 18) * ratio);
@@ -77,8 +78,9 @@ public final class LocalSyncHud implements HudElement {
             graphics.fill(9, 31, 9 + fill, 32, 0x78FFFFFF);
         }
 
-        String left = LocalSyncCommands.formatTime(elapsed);
-        String right = duration > 0L ? LocalSyncCommands.formatTime(duration) : "--:--";
+        String left = live ? "LIVE" : LocalSyncCommands.formatTime(elapsed);
+        String right = live ? "实时" : duration > 0L
+            ? LocalSyncCommands.formatTime(duration) : "--:--";
         graphics.text(font, left, 10, 37, GlassUi.MUTED, false);
         graphics.text(font, right, width - 10 - font.width(right), 37,
             GlassUi.MUTED, false);

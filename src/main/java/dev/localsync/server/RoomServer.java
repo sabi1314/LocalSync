@@ -4,6 +4,9 @@ import dev.localsync.LocalSyncMod;
 import dev.localsync.net.Packets;
 import dev.localsync.net.Packets.AdvancePayload;
 import dev.localsync.net.Packets.CommandPayload;
+import dev.localsync.net.Packets.QueueAddPayload;
+import dev.localsync.net.Packets.QueueEntryData;
+import dev.localsync.net.Packets.QueuePayload;
 import dev.localsync.net.Packets.SnapshotPayload;
 import dev.localsync.net.Packets.ScreenPayload;
 import net.minecraft.core.BlockPos;
@@ -36,6 +39,9 @@ public final class RoomServer {
     public static void register() {
         ServerPlayNetworking.registerGlobalReceiver(CommandPayload.TYPE, (payload, context) ->
             context.server().execute(() -> handle(context.server(), context.player(), payload)));
+        ServerPlayNetworking.registerGlobalReceiver(QueueAddPayload.TYPE, (payload, context) ->
+            context.server().execute(() ->
+                handleQueueAdd(context.server(), context.player(), payload)));
         ServerPlayNetworking.registerGlobalReceiver(AdvancePayload.TYPE, (payload, context) ->
             context.server().execute(() ->
                 handleAdvance(context.server(), context.player(), payload)));
@@ -43,6 +49,7 @@ public final class RoomServer {
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) ->
             server.execute(() -> {
                 send(handler.getPlayer());
+                sendQueue(handler.getPlayer());
                 sendScreen(handler.getPlayer());
             }));
 
@@ -103,8 +110,9 @@ public final class RoomServer {
                     send(player);
                     return;
                 }
-                TIMELINE.play(candidate, name, now);
-                LocalSyncMod.LOGGER.info("{} started a LocalSync session", name);
+                RoomTimeline.RequestResult result = TIMELINE.request(
+                    candidate, "", name, now);
+                LocalSyncMod.LOGGER.info("{} submitted a LocalSync request ({})", name, result);
                 if (player != null) {
                     player.sendSystemMessage(Component.literal(
                         "LocalSync | 播放请求已同步，客户端正在解析媒体"));
@@ -120,6 +128,7 @@ public final class RoomServer {
             case Packets.STOP -> TIMELINE.stop(name, now);
             case Packets.REQUEST_STATE -> {
                 send(player);
+                sendQueue(player);
                 sendScreen(player);
                 return;
             }
@@ -162,43 +171,86 @@ public final class RoomServer {
         }
         ticksUntilHeartbeat = HEARTBEAT_TICKS;
         broadcast(server);
+        broadcastQueue(server);
+    }
+
+    private static void handleQueueAdd(MinecraftServer server, ServerPlayer player,
+                                       QueueAddPayload request) {
+        ensureRuntime(server);
+        String name = player == null ? "?" : player.getGameProfile().name();
+        String candidate = UrlNormalizer.normalize(request.mediaUrl(), MAX_URL_LENGTH);
+        if (candidate == null) {
+            if (player != null) {
+                player.sendSystemMessage(Component.literal(
+                    "LocalSync | 未识别到有效的 HTTP/HTTPS 链接"));
+            }
+            send(player);
+            sendQueue(player);
+            return;
+        }
+        RoomTimeline.RequestResult result = TIMELINE.request(candidate,
+            request.title(), name, System.currentTimeMillis());
+        if (player != null) {
+            String message = switch (result) {
+                case STARTED -> "LocalSync | 已开始播放";
+                case QUEUED -> "LocalSync | 已加入播放队列";
+                case FULL -> "LocalSync | 播放队列已满（最多 64 项）";
+            };
+            player.sendSystemMessage(Component.literal(message));
+        }
+        if (result != RoomTimeline.RequestResult.FULL) {
+            ticksUntilHeartbeat = HEARTBEAT_TICKS;
+            broadcast(server);
+            broadcastQueue(server);
+        } else {
+            sendQueue(player);
+        }
     }
 
     private static void handleAdvance(MinecraftServer server, ServerPlayer player,
                                       AdvancePayload advance) {
-        if (server != activeServer) {
-            activeServer = server;
-            resetRuntime();
-            ScreenPayload persisted = ScreenStore.load(server);
-            if (persisted != null) {
-                screen = persisted;
-            }
-        }
+        ensureRuntime(server);
         String name = player == null ? "?" : player.getGameProfile().name();
         String candidate = UrlNormalizer.normalize(advance.nextMediaUrl(), MAX_URL_LENGTH);
-        if (candidate == null || candidate.equals(advance.expectedMediaUrl())) {
-            LocalSyncMod.LOGGER.warn("Rejected invalid LocalSync auto-advance from {}", name);
-            send(player);
-            return;
+        if (candidate != null && candidate.equals(advance.expectedMediaUrl())) {
+            candidate = null;
         }
-        boolean accepted = TIMELINE.advanceIfCurrent(advance.expectedRevision(),
-            advance.expectedMediaUrl(), candidate, name, System.currentTimeMillis());
-        if (!accepted) {
+        RoomTimeline.AdvanceResult result = TIMELINE.advanceIfCurrent(
+            advance.expectedRevision(), advance.expectedMediaUrl(), "", candidate,
+            name, System.currentTimeMillis());
+        if (result == RoomTimeline.AdvanceResult.STALE) {
             LocalSyncMod.LOGGER.debug(
                 "Ignored stale LocalSync auto-advance from {} at revision {}",
                 name, advance.expectedRevision());
             send(player);
+            sendQueue(player);
+            return;
+        }
+        if (result == RoomTimeline.AdvanceResult.NONE) {
+            LocalSyncMod.LOGGER.info("LocalSync reached the end of playback at revision {}",
+                advance.expectedRevision());
+            broadcast(server);
+            broadcastQueue(server);
             return;
         }
         ticksUntilHeartbeat = HEARTBEAT_TICKS;
-        LocalSyncMod.LOGGER.info("{} advanced the LocalSync session to the next video", name);
+        LocalSyncMod.LOGGER.info("{} advanced the LocalSync session ({})", name, result);
         broadcast(server);
+        broadcastQueue(server);
     }
 
     private static SnapshotPayload snapshot() {
         RoomTimeline.State state = TIMELINE.state(System.currentTimeMillis());
         return new SnapshotPayload(state.active(), state.paused(), state.revision(),
-            state.positionMs(), state.actor(), state.mediaUrl());
+            state.positionMs(), state.actor(), state.mediaUrl(), state.mediaTitle());
+    }
+
+    private static QueuePayload queueSnapshot() {
+        RoomTimeline.QueueState state = TIMELINE.queueState();
+        return new QueuePayload(state.revision(), state.entries().stream()
+            .map(entry -> new QueueEntryData(entry.id(), entry.requester(),
+                entry.title(), entry.mediaUrl()))
+            .toList());
     }
 
     private static void broadcast(MinecraftServer server) {
@@ -220,6 +272,29 @@ public final class RoomServer {
             ServerPlayNetworking.send(player, state);
         } catch (RuntimeException error) {
             LocalSyncMod.LOGGER.debug("Snapshot delivery failed for {}",
+                player.getGameProfile().name(), error);
+        }
+    }
+
+    private static void broadcastQueue(MinecraftServer server) {
+        QueuePayload state = queueSnapshot();
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            sendQueue(player, state);
+        }
+    }
+
+    private static void sendQueue(ServerPlayer player) {
+        sendQueue(player, queueSnapshot());
+    }
+
+    private static void sendQueue(ServerPlayer player, QueuePayload state) {
+        if (player == null || !ServerPlayNetworking.canSend(player, QueuePayload.TYPE)) {
+            return;
+        }
+        try {
+            ServerPlayNetworking.send(player, state);
+        } catch (RuntimeException error) {
+            LocalSyncMod.LOGGER.debug("Queue delivery failed for {}",
                 player.getGameProfile().name(), error);
         }
     }
@@ -304,6 +379,18 @@ public final class RoomServer {
         FIRST_CORNERS.clear();
         screen = emptyScreen(screen.revision() + 1);
         ticksUntilHeartbeat = HEARTBEAT_TICKS;
+    }
+
+    private static void ensureRuntime(MinecraftServer server) {
+        if (server == activeServer) {
+            return;
+        }
+        activeServer = server;
+        resetRuntime();
+        ScreenPayload persisted = ScreenStore.load(server);
+        if (persisted != null) {
+            screen = persisted;
+        }
     }
 
     private record ScreenCorner(String dimension, BlockPos pos, Direction face) {

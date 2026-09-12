@@ -2,6 +2,30 @@
 
 All notable changes to LocalSync are documented here. Versions follow semantic versioning.
 
+## [1.5.2] - 2026-09-12
+
+### Added
+
+- A server-authoritative FIFO request queue for multiple players, with manual next-item playback and queue-first auto-advance.
+- Per-player private screens with independent playback, audio, placement, search, favorites, account quality, and autoplay state.
+- Bilibili live search and room playback for both shared and private screens, including quality selection and bounded stream reconnection.
+- A public/private screen chooser, mode-specific control centers, back navigation, and a centered mode indicator.
+- Technical notes covering the Bilibili live APIs and stream-selection behavior used by LocalSync.
+
+### Changed
+
+- Preserve video and live search queries, results, pages, and scroll positions when the control center closes.
+- Reopen the last closed public or private control center when its complete screen is available; show the chooser when neither screen is available.
+- Reduce and center the public/private chooser buttons across wide and narrow GUI scales.
+- Prefer AVC-FLV live streams and request the highest quality actually granted to the signed-in account.
+- Clarify delayed video-frame initialization as slow loading rather than failure, and report when the frame becomes ready.
+
+### Fixed
+
+- Keep private playback data entirely client-local and scope private screen placement by player and world/server.
+- Prevent shared autoplay from skipping queued player requests.
+- Distinguish confirmed resolver/player failures from media that is still producing its first texture.
+
 ## [1.4.2] - 2026-09-11
 
 ### Added

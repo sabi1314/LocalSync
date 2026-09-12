@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "localsync",
-  "version": "1.4.2",
+  "version": "1.5.2",
   "name": "LocalSync 局域网同看",
   "description": "在局域网、单机集成服务器或 Fabric 服务器中同步观看网页视频和收听音频。",
   "authors": ["LocalSync contributors"],

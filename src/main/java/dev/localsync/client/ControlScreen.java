@@ -8,6 +8,7 @@ import dev.localsync.client.BilibiliAccountData.QrLogin;
 import dev.localsync.client.BilibiliAccountData.QrPoll;
 import dev.localsync.client.BilibiliAccountData.QrState;
 import dev.localsync.net.Packets;
+import dev.localsync.net.Packets.QueueEntryData;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractSliderButton;
@@ -29,7 +30,8 @@ import java.util.function.DoubleConsumer;
 import java.util.function.DoubleFunction;
 
 public final class ControlScreen extends Screen {
-    private enum Page { SEARCH, FAVORITES, CONTROLS, HUD, ACCOUNT }
+    private enum Mode { HOME, PUBLIC, PRIVATE }
+    private enum Page { HOME, SEARCH, FAVORITES, LIVE, QUEUE, CONTROLS, HUD, ACCOUNT }
 
     private static final int MAX_PANEL_WIDTH = 780;
     private static final int MAX_PANEL_HEIGHT = 430;
@@ -47,17 +49,29 @@ public final class ControlScreen extends Screen {
             thread.setDaemon(true);
             return thread;
         });
+    private static String rememberedSearchText = "";
+    private static List<BilibiliResolver.SearchResult> rememberedSearchResults = List.of();
+    private static int rememberedSearchPage = 1;
+    private static int rememberedSearchOffset;
+    private static String rememberedLiveSearchText = "";
+    private static List<BilibiliLiveResolver.LiveSearchResult> rememberedLiveResults = List.of();
+    private static int rememberedLivePage = 1;
+    private static int rememberedLiveOffset;
+    private static Mode lastClosedMode = Mode.HOME;
 
     private final BilibiliAccountService account = BilibiliAccountService.instance();
 
-    private Page page = Page.SEARCH;
+    private Mode mode = Mode.HOME;
+    private Page page = Page.HOME;
     private EditBox searchBox;
+    private EditBox liveSearchBox;
     private EditBox urlBox;
     private EditBox cookieBox;
     private GlassButton searchButton;
     private List<BilibiliResolver.SearchResult> searchResults = List.of();
     private String searchText = "";
     private String urlText = "";
+    private String offlineUrlText = "";
     private String cookieText = "";
     private String notice = "";
     private boolean searching;
@@ -65,6 +79,15 @@ public final class ControlScreen extends Screen {
     private int searchSerial;
     private int searchOffset;
     private int visibleResults;
+    private List<BilibiliLiveResolver.LiveSearchResult> liveResults = List.of();
+    private String liveSearchText = "";
+    private boolean liveSearching;
+    private int livePage = 1;
+    private int liveSearchSerial;
+    private int liveOffset;
+    private int visibleLiveRows;
+    private int queueOffset;
+    private int visibleQueueRows;
 
     private Profile accountProfile;
     private List<FavoriteFolder> favoriteFolders = List.of();
@@ -114,7 +137,17 @@ public final class ControlScreen extends Screen {
 
     public ControlScreen() {
         super(Component.literal("LocalSync"));
+        mode = openingMode();
+        page = mode == Mode.HOME ? Page.HOME : Page.SEARCH;
         accountProfile = account.cachedProfile().orElse(null);
+        searchText = rememberedSearchText;
+        searchResults = rememberedSearchResults;
+        searchPage = rememberedSearchPage;
+        searchOffset = rememberedSearchOffset;
+        liveSearchText = rememberedLiveSearchText;
+        liveResults = rememberedLiveResults;
+        livePage = rememberedLivePage;
+        liveOffset = rememberedLiveOffset;
     }
 
     @Override
@@ -127,29 +160,77 @@ public final class ControlScreen extends Screen {
         contentTop = panelY + 72;
         contentBottom = panelY + panelHeight - 34;
 
-        addTabs();
+        if (page != Page.HOME) {
+            addTabs();
+        }
         switch (page) {
+            case HOME -> initHomePage();
             case SEARCH -> initSearchPage();
             case FAVORITES -> initFavoritesPage();
-            case CONTROLS -> initControlsPage();
+            case LIVE -> initLivePage();
+            case QUEUE -> initQueuePage();
+            case CONTROLS -> {
+                if (mode == Mode.PRIVATE) initOfflinePage();
+                else initControlsPage();
+            }
             case HUD -> initHudPage();
             case ACCOUNT -> initAccountPage();
         }
     }
 
+    private void initHomePage() {
+        HomeLayout layout = homeLayout();
+        addButton("公共屏幕", layout.publicX(), layout.publicY(),
+            layout.buttonWidth(), layout.buttonHeight(), true,
+            () -> openMode(Mode.PUBLIC));
+        addButton("私人屏幕", layout.privateX(), layout.privateY(),
+            layout.buttonWidth(), layout.buttonHeight(), false,
+            () -> openMode(Mode.PRIVATE));
+    }
+
+    private HomeLayout homeLayout() {
+        int buttonWidth = Math.min(176, Math.max(1, panelWidth - EDGE * 2));
+        int buttonHeight = 42;
+        int horizontalGap = 14;
+        int statusGap = 7;
+        int itemHeight = buttonHeight + statusGap + font.lineHeight;
+        boolean sideBySide = panelWidth >= buttonWidth * 2 + horizontalGap + EDGE * 2;
+        int groupWidth = sideBySide ? buttonWidth * 2 + horizontalGap : buttonWidth;
+        int groupHeight = sideBySide ? itemHeight : itemHeight * 2 + 12;
+        int groupX = panelX + (panelWidth - groupWidth) / 2;
+        int groupY = panelY + (panelHeight - groupHeight) / 2;
+        int privateX = sideBySide ? groupX + buttonWidth + horizontalGap : groupX;
+        int privateY = sideBySide ? groupY : groupY + itemHeight + 12;
+        return new HomeLayout(buttonWidth, buttonHeight,
+            groupX, groupY, privateX, privateY,
+            groupY + buttonHeight + statusGap,
+            privateY + buttonHeight + statusGap);
+    }
+
     private void addTabs() {
         int gap = 5;
         int available = Math.max(1, panelWidth - EDGE * 2);
-        int tabWidth = Math.max(30, (available - gap * 4) / 5);
+        int count = mode == Mode.PRIVATE ? 6 : 8;
+        int tabWidth = Math.max(30, (available - gap * (count - 1)) / count);
         int x = panelX + EDGE;
         int y = panelY + 38;
+        addButton("返回", x, y, tabWidth, TAB_HEIGHT, false, this::openHome);
+        x += tabWidth + gap;
         addTab("搜索", Page.SEARCH, x, y, tabWidth);
         x += tabWidth + gap;
         addTab("收藏", Page.FAVORITES, x, y, tabWidth);
         x += tabWidth + gap;
-        addTab("播放", Page.CONTROLS, x, y, tabWidth);
+        addTab("直播", Page.LIVE, x, y, tabWidth);
+        if (mode == Mode.PUBLIC) {
+            x += tabWidth + gap;
+            addTab("队列", Page.QUEUE, x, y, tabWidth);
+        }
         x += tabWidth + gap;
-        addTab("界面", Page.HUD, x, y, tabWidth);
+        addTab("播放", Page.CONTROLS, x, y, tabWidth);
+        if (mode == Mode.PUBLIC) {
+            x += tabWidth + gap;
+            addTab("界面", Page.HUD, x, y, tabWidth);
+        }
         x += tabWidth + gap;
         addTab("账号", Page.ACCOUNT, x, y,
             Math.max(30, panelX + panelWidth - EDGE - x));
@@ -182,8 +263,15 @@ public final class ControlScreen extends Screen {
         for (int row = 0; row < count; row++) {
             BilibiliResolver.SearchResult result = searchResults.get(searchOffset + row);
             int rowY = listY + row * ROW_HEIGHT;
-            addButton("播放", listX + listWidth - 58, rowY + 14,
-                48, 24, false, () -> playUrl(result.pageUrl()));
+            if (mode == Mode.PRIVATE) {
+                addButton("播放", listX + listWidth - 58, rowY + 14,
+                    48, 24, true,
+                    () -> playOffline(result.pageUrl(), result.title()));
+            } else {
+                addButton("点播", listX + listWidth - 58, rowY + 14,
+                    48, 24, true,
+                    () -> playUrl(result.pageUrl(), result.title()));
+            }
         }
 
         GlassButton previous = addButton("<", panelX + EDGE,
@@ -194,6 +282,46 @@ public final class ControlScreen extends Screen {
             panelY + panelHeight - 27, 28, 20, false,
             () -> startSearch(searchPage + 1));
         next.active = !searching && !searchResults.isEmpty();
+    }
+
+    private void initLivePage() {
+        int x = panelX + EDGE;
+        int searchWidth = Math.max(50, panelWidth - EDGE * 2 - 156);
+        liveSearchBox = glassEditBox(x, contentTop, searchWidth, 23,
+            "搜索主播、直播标题，或输入房间号/链接", 512);
+        liveSearchBox.setValue(liveSearchText);
+        GlassButton search = addButton(liveSearching ? "搜索中" : "搜索",
+            x + searchWidth + 6, contentTop, 70, 23, true,
+            () -> startLiveSearch(1));
+        search.active = !liveSearching;
+        addButton("打开", x + searchWidth + 82, contentTop, 68, 23, false,
+            this::openLiveInput);
+        setInitialFocus(liveSearchBox);
+
+        listX = x;
+        listY = contentTop + 31;
+        listWidth = panelWidth - EDGE * 2;
+        listHeight = Math.max(0, contentBottom - listY);
+        visibleLiveRows = Math.max(1, Math.min(5, listHeight / ROW_HEIGHT));
+        int count = Math.min(visibleLiveRows,
+            Math.max(0, liveResults.size() - liveOffset));
+        for (int row = 0; row < count; row++) {
+            BilibiliLiveResolver.LiveSearchResult result =
+                liveResults.get(liveOffset + row);
+            int rowY = listY + row * ROW_HEIGHT;
+            addButton(mode == Mode.PRIVATE ? "播放" : "点播",
+                listX + listWidth - 58, rowY + 14, 48, 24, true,
+                () -> playLive(result));
+        }
+
+        GlassButton previous = addButton("<", panelX + EDGE,
+            panelY + panelHeight - 27, 28, 20, false,
+            () -> startLiveSearch(livePage - 1));
+        previous.active = !liveSearching && livePage > 1;
+        GlassButton next = addButton(">", panelX + EDGE + 34,
+            panelY + panelHeight - 27, 28, 20, false,
+            () -> startLiveSearch(livePage + 1));
+        next.active = !liveSearching && !liveResults.isEmpty();
     }
 
     private void initFavoritesPage() {
@@ -271,9 +399,16 @@ public final class ControlScreen extends Screen {
         for (int row = 0; row < count; row++) {
             FavoriteVideo video = videos.get(favoriteOffset + row);
             int rowY = listY + row * ROW_HEIGHT;
-            GlassButton play = addButton(video.available() ? "播放" : "失效",
-                listX + listWidth - 58, rowY + 14, 48, 24, false,
-                () -> playUrl(video.pageUrl()));
+            GlassButton play = addButton(video.available()
+                    ? mode == Mode.PRIVATE ? "播放" : "点播" : "失效",
+                listX + listWidth - 58, rowY + 14, 48, 24, true,
+                () -> {
+                    if (mode == Mode.PRIVATE) {
+                        playOffline(video.pageUrl(), video.title());
+                    } else {
+                        playUrl(video.pageUrl(), video.title());
+                    }
+                });
             play.active = video.available();
         }
 
@@ -285,6 +420,22 @@ public final class ControlScreen extends Screen {
             () -> loadFavoritePage(selectedFolderId, favoritePage + 1));
         next.active = !favoritesLoading && favoritePageData != null
             && favoritePageData.hasMore();
+    }
+
+    private void initQueuePage() {
+        listX = panelX + EDGE;
+        listY = contentTop + 27;
+        listWidth = panelWidth - EDGE * 2;
+        listHeight = Math.max(0, contentBottom - listY);
+        visibleQueueRows = Math.max(1, Math.min(6, listHeight / 38));
+        int maximum = Math.max(0,
+            QueueState.instance().entries().size() - visibleQueueRows);
+        queueOffset = Math.max(0, Math.min(maximum, queueOffset));
+        addButton("下一集", panelX + panelWidth - EDGE - 82,
+            contentTop - 3, 82, 23, true, () -> {
+                PlaybackSession.instance().requestNext();
+                notice = "已请求播放下一集";
+            });
     }
 
     private void initControlsPage() {
@@ -303,9 +454,9 @@ public final class ControlScreen extends Screen {
         int y = urlY + 28;
         if (dense) {
             addButtonRow(left, y, available,
-                new String[]{"播放", "暂停/继续", "-10s", "+10s", "停止"},
+                new String[]{"播放", "暂停/继续", "下一集", "-10s", "+10s", "停止"},
                 new Runnable[]{() -> send(Packets.PLAY, 0L, urlBox.getValue()),
-                    this::togglePause,
+                    this::togglePause, () -> PlaybackSession.instance().requestNext(),
                     () -> send(Packets.SEEK_RELATIVE, -10_000L, ""),
                     () -> send(Packets.SEEK_RELATIVE, 10_000L, ""),
                     () -> send(Packets.STOP, 0L, "")});
@@ -320,7 +471,7 @@ public final class ControlScreen extends Screen {
                 new String[]{"角点 1", "角点 2", "清除屏幕"},
                 new Runnable[]{() -> selectCorner(Packets.SCREEN_POS1),
                     () -> selectCorner(Packets.SCREEN_POS2),
-                    () -> send(Packets.SCREEN_CLEAR, 0L, "")});
+                    this::clearPublicScreen});
             return;
         }
 
@@ -328,9 +479,10 @@ public final class ControlScreen extends Screen {
         y = contentTop + 48;
         if (compact) {
             addButtonRow(left, y, available,
-                new String[]{"播放", "暂停", "停止"},
+                new String[]{"播放", "暂停", "下一集", "停止"},
                 new Runnable[]{() -> send(Packets.PLAY, 0L, urlBox.getValue()),
-                    this::togglePause, () -> send(Packets.STOP, 0L, "")});
+                    this::togglePause, () -> PlaybackSession.instance().requestNext(),
+                    () -> send(Packets.STOP, 0L, "")});
             y += 29;
             addButtonRow(left, y, available,
                 new String[]{"-10s", "+10s", "翻转"},
@@ -338,9 +490,9 @@ public final class ControlScreen extends Screen {
                     () -> send(Packets.SEEK_RELATIVE, 10_000L, ""), this::flipVideo});
         } else {
             addButtonRow(left, y, available,
-                new String[]{"播放", "暂停/继续", "-10s", "+10s", "停止"},
+                new String[]{"播放", "暂停/继续", "下一集", "-10s", "+10s", "停止"},
                 new Runnable[]{() -> send(Packets.PLAY, 0L, urlBox.getValue()),
-                    this::togglePause,
+                    this::togglePause, () -> PlaybackSession.instance().requestNext(),
                     () -> send(Packets.SEEK_RELATIVE, -10_000L, ""),
                     () -> send(Packets.SEEK_RELATIVE, 10_000L, ""),
                     () -> send(Packets.STOP, 0L, "")});
@@ -358,7 +510,37 @@ public final class ControlScreen extends Screen {
             new String[]{"角点 1", "角点 2", "清除屏幕"},
             new Runnable[]{() -> selectCorner(Packets.SCREEN_POS1),
                 () -> selectCorner(Packets.SCREEN_POS2),
-                () -> send(Packets.SCREEN_CLEAR, 0L, "")});
+                this::clearPublicScreen});
+    }
+
+    private void initOfflinePage() {
+        OfflinePlaybackSession offline = OfflinePlaybackSession.instance();
+        int left = panelX + EDGE;
+        int available = Math.max(1, panelWidth - EDGE * 2);
+        int urlY = contentTop + 12;
+        urlBox = glassEditBox(left, urlY, available, 23,
+            "Bilibili 或 HTTP/HTTPS 媒体链接", 8192);
+        if (offlineUrlText.isBlank()) {
+            offlineUrlText = offline.mediaUrl();
+        }
+        urlBox.setValue(offlineUrlText);
+        int y = urlY + 34;
+        addButtonRow(left, y, available,
+            new String[]{"本地播放", "暂停/继续", "下一集", "-10s", "+10s", "停止"},
+            new Runnable[]{() -> playOffline(urlBox.getValue(), ""), offline::togglePause,
+                offline::requestNext, () -> offline.seekRelative(-10_000L),
+                () -> offline.seekRelative(10_000L), offline::stop});
+        y += 36;
+        addButtonRow(left, y, available,
+            new String[]{"音量 -", "音量 +", offline.visible() ? "隐藏画面" : "显示画面",
+                "翻转画面"},
+            new Runnable[]{() -> changeOfflineVolume(-5), () -> changeOfflineVolume(5),
+                () -> { offline.toggleVisible(); rebuildWidgets(); }, offline::toggleFlip});
+        y += 55;
+        addButtonRow(left, y, available,
+            new String[]{"离线角点 1", "离线角点 2", "清除离线屏幕"},
+            new Runnable[]{() -> selectOfflineCorner(1), () -> selectOfflineCorner(2),
+                this::clearOfflineScreen});
     }
 
     private void initHudPage() {
@@ -513,11 +695,52 @@ public final class ControlScreen extends Screen {
         rebuildWidgets();
     }
 
+    private void openMode(Mode target) {
+        captureInputs();
+        mode = target;
+        page = Page.SEARCH;
+        notice = "";
+        rebuildWidgets();
+    }
+
+    private static Mode openingMode() {
+        boolean hasPublic = ScreenState.instance().screen().active();
+        boolean hasPrivate = OfflineScreenState.instance().screen().active();
+        if (!hasPublic && !hasPrivate) {
+            return Mode.HOME;
+        }
+        if (lastClosedMode == Mode.PUBLIC && hasPublic) return Mode.PUBLIC;
+        if (lastClosedMode == Mode.PRIVATE && hasPrivate) return Mode.PRIVATE;
+        if (hasPublic != hasPrivate) {
+            return hasPublic ? Mode.PUBLIC : Mode.PRIVATE;
+        }
+        return Mode.HOME;
+    }
+
+    private void openHome() {
+        captureInputs();
+        mode = Mode.HOME;
+        page = Page.HOME;
+        notice = "";
+        rebuildWidgets();
+    }
+
     private void captureInputs() {
-        if (searchBox != null) searchText = searchBox.getValue();
-        if (urlBox != null) urlText = urlBox.getValue();
+        if (searchBox != null) {
+            searchText = searchBox.getValue();
+            rememberSearch();
+        }
+        if (liveSearchBox != null) {
+            liveSearchText = liveSearchBox.getValue();
+            rememberLiveSearch();
+        }
+        if (urlBox != null) {
+            if (mode == Mode.PRIVATE) offlineUrlText = urlBox.getValue();
+            else urlText = urlBox.getValue();
+        }
         if (cookieBox != null) cookieText = cookieBox.getValue();
         searchBox = null;
+        liveSearchBox = null;
         urlBox = null;
         cookieBox = null;
     }
@@ -531,6 +754,7 @@ public final class ControlScreen extends Screen {
         searchText = query;
         searchPage = Math.max(1, requestedPage);
         searchOffset = 0;
+        rememberSearch();
         searching = true;
         notice = "正在按 B 站综合排序搜索";
         if (searchButton != null) searchButton.active = false;
@@ -551,9 +775,64 @@ public final class ControlScreen extends Screen {
         if (serial != searchSerial) return;
         searching = false;
         searchResults = found;
+        rememberSearch();
         notice = error == null ? "第 " + searchPage + " 页 · " + found.size()
             + " 个结果 · B 站综合排序" : "搜索失败: " + readable(error);
         if (minecraft.screen == this) rebuildWidgets();
+    }
+
+    private void rememberSearch() {
+        rememberedSearchText = searchText;
+        rememberedSearchResults = List.copyOf(searchResults);
+        rememberedSearchPage = searchPage;
+        rememberedSearchOffset = searchOffset;
+    }
+
+    private void startLiveSearch(int requestedPage) {
+        String query = liveSearchBox == null
+            ? liveSearchText : liveSearchBox.getValue().trim();
+        if (query.isBlank()) {
+            notice = "请输入直播搜索关键词";
+            return;
+        }
+        liveSearchText = query;
+        livePage = Math.max(1, requestedPage);
+        liveOffset = 0;
+        liveSearching = true;
+        notice = "正在搜索直播间";
+        rememberLiveSearch();
+        int serial = ++liveSearchSerial;
+        SEARCH_EXECUTOR.execute(() -> {
+            try {
+                List<BilibiliLiveResolver.LiveSearchResult> found =
+                    BilibiliLiveResolver.search(query, livePage);
+                Minecraft.getInstance().execute(() ->
+                    finishLiveSearch(serial, found, null));
+            } catch (Throwable error) {
+                Minecraft.getInstance().execute(() ->
+                    finishLiveSearch(serial, List.of(), error));
+            }
+        });
+    }
+
+    private void finishLiveSearch(int serial,
+                                  List<BilibiliLiveResolver.LiveSearchResult> found,
+                                  Throwable error) {
+        if (serial != liveSearchSerial) return;
+        liveSearching = false;
+        liveResults = found;
+        notice = error == null
+            ? "第 " + livePage + " 页 · " + found.size() + " 个直播间"
+            : "直播搜索失败: " + readable(error);
+        rememberLiveSearch();
+        if (minecraft.screen == this) rebuildWidgets();
+    }
+
+    private void rememberLiveSearch() {
+        rememberedLiveSearchText = liveSearchText;
+        rememberedLiveResults = List.copyOf(liveResults);
+        rememberedLivePage = livePage;
+        rememberedLiveOffset = liveOffset;
     }
 
     private void loadFavoriteFolders() {
@@ -781,12 +1060,76 @@ public final class ControlScreen extends Screen {
         folderOffset = 0;
     }
 
-    private void playUrl(String url) {
+    private void playUrl(String url, String title) {
         if (url == null || url.isBlank()) {
             notice = "视频不可播放";
             return;
         }
-        send(Packets.PLAY, 0L, url);
+        if (LocalSyncCommands.queueMedia(url, title)) {
+            notice = "已提交点播请求";
+            onClose();
+        } else {
+            notice = "当前世界未加载 LocalSync 服务端";
+        }
+    }
+
+    private void playLive(BilibiliLiveResolver.LiveSearchResult result) {
+        String title = "直播 · " + result.title();
+        if (mode == Mode.PRIVATE) {
+            playOffline(result.pageUrl(), title);
+        } else {
+            playUrl(result.pageUrl(), title);
+        }
+    }
+
+    private void openLiveInput() {
+        String raw = liveSearchBox == null
+            ? liveSearchText : liveSearchBox.getValue().trim();
+        try {
+            String pageUrl = BilibiliLiveResolver.canonicalPageUrl(raw);
+            if (mode == Mode.PRIVATE) {
+                playOffline(pageUrl, "Bilibili 直播");
+            } else {
+                playUrl(pageUrl, "Bilibili 直播");
+            }
+        } catch (Throwable error) {
+            notice = "直播房间无效: " + readable(error);
+        }
+    }
+
+    private void playOffline(String url, String title) {
+        if (url == null || url.isBlank()) {
+            notice = "视频不可播放";
+            return;
+        }
+        OfflinePlaybackSession.instance().play(url, title);
+        offlineUrlText = url;
+        notice = "正在本机解析视频";
+        onClose();
+    }
+
+    private void changeOfflineVolume(int delta) {
+        OfflinePlaybackSession offline = OfflinePlaybackSession.instance();
+        offline.setVolume(offline.volume() + delta);
+        notice = "离线音量 " + offline.volume();
+    }
+
+    private void selectOfflineCorner(int number) {
+        if (!OfflineScreenState.instance().selectCorner(number)) {
+            notice = "请看向同一竖直墙面的方块后再设置";
+            return;
+        }
+        notice = number == 1 ? "离线角点 1 已设置" : "离线屏幕已创建";
+        if (minecraft.player != null) {
+            minecraft.player.sendSystemMessage(Component.literal("LocalSync | " + notice));
+        }
+        onClose();
+    }
+
+    private void clearOfflineScreen() {
+        OfflineScreenState.instance().clear();
+        notice = "离线屏幕已清除";
+        rebuildWidgets();
     }
 
     private void togglePause() {
@@ -824,6 +1167,15 @@ public final class ControlScreen extends Screen {
         onClose();
     }
 
+    private void clearPublicScreen() {
+        if (LocalSyncCommands.clearPublicScreen()) {
+            notice = "影院屏幕已清除";
+            rebuildWidgets();
+        } else {
+            notice = "当前世界未加载 LocalSync 服务端";
+        }
+    }
+
     private void send(int action, long value, String valueText) {
         String text = valueText;
         if (action == Packets.PLAY && (text == null || text.isBlank())) {
@@ -855,6 +1207,11 @@ public final class ControlScreen extends Screen {
         if (page == Page.SEARCH && searchBox != null && searchBox.isFocused()
                 && enter(event)) {
             startSearch(1);
+            return true;
+        }
+        if (page == Page.LIVE && liveSearchBox != null && liveSearchBox.isFocused()
+                && enter(event)) {
+            startLiveSearch(1);
             return true;
         }
         if (page == Page.ACCOUNT && cookieBox != null && cookieBox.isFocused()
@@ -914,6 +1271,27 @@ public final class ControlScreen extends Screen {
             int updated = Math.max(0, Math.min(maximum, searchOffset + direction));
             if (updated != searchOffset) {
                 searchOffset = updated;
+                rememberSearch();
+                rebuildWidgets();
+            }
+            return true;
+        }
+        if (page == Page.LIVE && liveResults.size() > visibleLiveRows) {
+            int maximum = liveResults.size() - visibleLiveRows;
+            int updated = Math.max(0, Math.min(maximum, liveOffset + direction));
+            if (updated != liveOffset) {
+                liveOffset = updated;
+                rememberLiveSearch();
+                rebuildWidgets();
+            }
+            return true;
+        }
+        if (page == Page.QUEUE
+                && QueueState.instance().entries().size() > visibleQueueRows) {
+            int maximum = QueueState.instance().entries().size() - visibleQueueRows;
+            int updated = Math.max(0, Math.min(maximum, queueOffset + direction));
+            if (updated != queueOffset) {
+                queueOffset = updated;
                 rebuildWidgets();
             }
             return true;
@@ -952,20 +1330,61 @@ public final class ControlScreen extends Screen {
             GlassUi.TEXT, false);
         GlassUi.pill(graphics, panelX + EDGE, panelY + 27, 46, 3,
             GlassUi.ACCENT, 0x40FFFFFF);
-        String state = fit(PlaybackSession.instance().statusText(),
-            Math.max(30, panelWidth - 126));
-        graphics.text(font, state, panelX + panelWidth - EDGE - font.width(state),
-            panelY + 14, GlassUi.MUTED, false);
+        String modeLabel = switch (mode) {
+            case HOME -> "选择屏幕";
+            case PUBLIC -> "公共屏幕";
+            case PRIVATE -> "私人屏幕";
+        };
+        int modeLabelWidth = font.width(modeLabel) + 16;
+        int modeLabelX = panelX + (panelWidth - modeLabelWidth) / 2;
+        GlassUi.pill(graphics, modeLabelX, panelY + 9,
+            modeLabelWidth, 18, GlassUi.ACCENT_SOFT, 0x56FFFFFF);
+        graphics.centeredText(font, modeLabel, panelX + panelWidth / 2,
+            panelY + 14, GlassUi.TEXT);
+        String headerState = switch (mode) {
+            case HOME -> "";
+            case PUBLIC -> PlaybackSession.instance().statusText();
+            case PRIVATE -> OfflinePlaybackSession.instance().statusText();
+        };
+        String state = fit(headerState,
+            Math.max(1, panelWidth / 2 - modeLabelWidth / 2 - EDGE - 8));
+        if (!state.isEmpty()) {
+            graphics.text(font, state,
+                panelX + panelWidth - EDGE - font.width(state),
+                panelY + 14, GlassUi.MUTED, false);
+        }
 
         switch (page) {
+            case HOME -> drawHomePage(graphics);
             case SEARCH -> drawSearchPage(graphics, mouseX, mouseY);
             case FAVORITES -> drawFavoritesPage(graphics, mouseX, mouseY);
-            case CONTROLS -> drawControlsPage(graphics);
+            case LIVE -> drawLivePage(graphics, mouseX, mouseY);
+            case QUEUE -> drawQueuePage(graphics, mouseX, mouseY);
+            case CONTROLS -> {
+                if (mode == Mode.PRIVATE) drawOfflinePage(graphics);
+                else drawControlsPage(graphics);
+            }
             case HUD -> drawHudPreview(graphics);
             case ACCOUNT -> drawAccountPage(graphics);
         }
         drawNotice(graphics);
         super.extractRenderState(graphics, mouseX, mouseY, partialTick);
+    }
+
+    private void drawHomePage(GuiGraphicsExtractor graphics) {
+        HomeLayout layout = homeLayout();
+
+        String publicState = fit(PlaybackSession.instance().statusText()
+            + " · 队列 " + QueueState.instance().entries().size(),
+            layout.buttonWidth() - 12);
+        String privateState = fit(OfflinePlaybackSession.instance().statusText(),
+            layout.buttonWidth() - 12);
+        graphics.centeredText(font, publicState,
+            layout.publicX() + layout.buttonWidth() / 2,
+            layout.publicStatusY(), GlassUi.MUTED);
+        graphics.centeredText(font, privateState,
+            layout.privateX() + layout.buttonWidth() / 2,
+            layout.privateStatusY(), GlassUi.MUTED);
     }
 
     private void drawSearchPage(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
@@ -990,6 +1409,59 @@ public final class ControlScreen extends Screen {
                 searchOffset + visibleResults) + "/" + searchResults.size();
         graphics.text(font, "第 " + searchPage + " 页 · " + range + " · B站综合排序",
             panelX + EDGE + 72, panelY + panelHeight - 22, GlassUi.MUTED, false);
+    }
+
+    private void drawLivePage(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+        drawInputShell(graphics, panelX + EDGE, contentTop,
+            panelWidth - EDGE * 2 - 156, 23);
+        int count = Math.min(visibleLiveRows,
+            Math.max(0, liveResults.size() - liveOffset));
+        for (int row = 0; row < count; row++) {
+            drawLiveRow(graphics, mouseX, mouseY, row,
+                liveResults.get(liveOffset + row));
+        }
+        if (liveSearching) {
+            centered(graphics, "正在搜索直播间...", contentTop + 78, GlassUi.ACCENT);
+        } else if (liveResults.isEmpty()) {
+            centered(graphics, liveSearchText.isBlank()
+                ? "搜索正在直播的主播或内容" : "没有找到正在直播的房间",
+                contentTop + 78, GlassUi.MUTED);
+        }
+        String range = liveResults.isEmpty() ? "0"
+            : (liveOffset + 1) + "-" + Math.min(liveResults.size(),
+                liveOffset + visibleLiveRows) + "/" + liveResults.size();
+        graphics.text(font, "第 " + livePage + " 页 · " + range + " · 按人气排序",
+            panelX + EDGE + 72, panelY + panelHeight - 22, GlassUi.MUTED, false);
+    }
+
+    private void drawLiveRow(GuiGraphicsExtractor graphics, int mouseX, int mouseY,
+                             int row, BilibiliLiveResolver.LiveSearchResult result) {
+        int rowY = listY + row * ROW_HEIGHT;
+        boolean hovered = inside(mouseX, mouseY, listX, rowY,
+            listWidth, ROW_HEIGHT - 4);
+        if (!ReGlassCompat.renderSurface(graphics, listX, rowY,
+                listWidth, ROW_HEIGHT - 4, 8f, hovered, false)) {
+            GlassUi.roundedPanel(graphics, listX, rowY,
+                listWidth, ROW_HEIGHT - 4, hovered ? ROW_HOVER : ROW);
+        }
+        Identifier cover = BilibiliCoverCache.getOrRequest(
+            "live:" + result.roomId(), result.coverUrl());
+        if (cover != null) {
+            graphics.blit(cover, listX + 4, rowY + 3,
+                listX + 82, rowY + 47, 0f, 1f, 0f, 1f);
+        } else {
+            GlassUi.roundedPanel(graphics, listX + 4, rowY + 3,
+                78, 44, 0xB52E343E);
+            graphics.centeredText(font, "LIVE", listX + 43, rowY + 20,
+                GlassUi.ACCENT);
+        }
+        int textX = listX + 91;
+        int textWidth = Math.max(24, listWidth - 159);
+        graphics.text(font, fit(result.title(), textWidth), textX, rowY + 8,
+            GlassUi.TEXT, false);
+        String meta = result.owner() + " · " + formatPopularity(result.online());
+        graphics.text(font, fit(meta, textWidth), textX, rowY + 28,
+            GlassUi.MUTED, false);
     }
 
     private void drawFavoritesPage(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
@@ -1027,6 +1499,32 @@ public final class ControlScreen extends Screen {
                     favoriteOffset + visibleFavoriteRows) + "/" + videos.size();
             graphics.text(font, "第 " + favoritePage + " 页 · " + range,
                 listX + 72, contentBottom - 16, GlassUi.MUTED, false);
+        }
+    }
+
+    private void drawQueuePage(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+        List<QueueEntryData> entries = QueueState.instance().entries();
+        graphics.text(font, "多人点播队列 · 先进先出", panelX + EDGE,
+            contentTop + 3, GlassUi.MUTED, false);
+        int count = Math.min(visibleQueueRows,
+            Math.max(0, entries.size() - queueOffset));
+        for (int row = 0; row < count; row++) {
+            QueueEntryData entry = entries.get(queueOffset + row);
+            int y = listY + row * 38;
+            boolean hovered = inside(mouseX, mouseY, listX, y, listWidth, 33);
+            if (!ReGlassCompat.renderSurface(graphics, listX, y,
+                    listWidth, 33, 7f, hovered, false)) {
+                GlassUi.roundedPanel(graphics, listX, y, listWidth, 33,
+                    hovered ? ROW_HOVER : ROW);
+            }
+            String title = entry.title().isBlank() ? entry.mediaUrl() : entry.title();
+            graphics.text(font, fit((queueOffset + row + 1) + ". " + title,
+                listWidth - 18), listX + 9, y + 6, GlassUi.TEXT, false);
+            graphics.text(font, fit("点播者: " + entry.requester(), listWidth - 18),
+                listX + 9, y + 19, GlassUi.MUTED, false);
+        }
+        if (entries.isEmpty()) {
+            centered(graphics, "播放队列为空", contentTop + 83, GlassUi.MUTED);
         }
     }
 
@@ -1079,6 +1577,22 @@ public final class ControlScreen extends Screen {
             dividerY, GlassUi.BORDER_SOFT);
         graphics.text(font, "影院屏幕", panelX + EDGE, dividerY + 9,
             GlassUi.TEXT, false);
+    }
+
+    private void drawOfflinePage(GuiGraphicsExtractor graphics) {
+        drawInputShell(graphics, panelX + EDGE, contentTop + 12,
+            panelWidth - EDGE * 2, 23);
+        graphics.text(font, fit(OfflinePlaybackSession.instance().statusText(),
+            (panelWidth - EDGE * 2) / 2), panelX + EDGE, contentTop - 4,
+            GlassUi.MUTED, false);
+        String screen = fit(OfflineScreenState.instance().statusText(),
+            (panelWidth - EDGE * 2) / 2);
+        graphics.text(font, screen, panelX + panelWidth - EDGE - font.width(screen),
+            contentTop - 4, GlassUi.MUTED, false);
+        graphics.horizontalLine(panelX + EDGE, panelX + panelWidth - EDGE - 1,
+            contentTop + 121, GlassUi.BORDER_SOFT);
+        graphics.text(font, "本机专属屏幕 · 不向其他玩家发送播放数据",
+            panelX + EDGE, contentTop + 132, GlassUi.MUTED, false);
     }
 
     private void drawHudPreview(GuiGraphicsExtractor graphics) {
@@ -1211,7 +1725,7 @@ public final class ControlScreen extends Screen {
     private void drawNotice(GuiGraphicsExtractor graphics) {
         if (notice.isBlank()) return;
         int available = Math.max(20, panelWidth - (page == Page.SEARCH
-            || page == Page.FAVORITES ? 190 : 28));
+            || page == Page.FAVORITES || page == Page.LIVE ? 190 : 28));
         String fitted = fit(notice, available);
         int x = panelX + panelWidth - EDGE - font.width(fitted);
         graphics.text(font, fitted, x, panelY + panelHeight - 21,
@@ -1275,6 +1789,13 @@ public final class ControlScreen extends Screen {
         return Math.max(0L, value) + " 播放";
     }
 
+    private static String formatPopularity(long value) {
+        if (value >= 10_000L) {
+            return String.format(Locale.ROOT, "%.1f万人气", value / 10_000.0);
+        }
+        return Math.max(0L, value) + " 人气";
+    }
+
     private static String formatDuration(long seconds) {
         long safe = Math.max(0L, seconds);
         if (safe >= 3_600L) {
@@ -1294,6 +1815,11 @@ public final class ControlScreen extends Screen {
             ? current.getClass().getSimpleName() : message;
     }
 
+    private record HomeLayout(int buttonWidth, int buttonHeight,
+                              int publicX, int publicY,
+                              int privateX, int privateY,
+                              int publicStatusY, int privateStatusY) {}
+
     private record AccountLayout(boolean sideBySide, int qrX, int qrY, int qrSize,
                                  int formX, int formY, int formWidth) {}
 
@@ -1310,8 +1836,15 @@ public final class ControlScreen extends Screen {
 
     @Override
     public void removed() {
+        if (mode == Mode.PUBLIC || mode == Mode.PRIVATE) {
+            lastClosedMode = mode;
+        }
+        captureInputs();
+        rememberSearch();
+        rememberLiveSearch();
         accountSerial++;
         searchSerial++;
+        liveSearchSerial++;
         folderSerial++;
         favoriteSerial++;
         cookieText = "";

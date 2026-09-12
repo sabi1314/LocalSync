@@ -18,16 +18,18 @@ import org.lwjgl.opengl.GL30C;
 import org.watermedia.api.media.players.MediaPlayer;
 
 public final class VideoOverlay {
-    private static final Identifier VIDEO_TEXTURE =
-        Identifier.fromNamespaceAndPath("localsync", "world_video");
+    private static final Identifier[] VIDEO_TEXTURES = {
+        Identifier.fromNamespaceAndPath("localsync", "world_video"),
+        Identifier.fromNamespaceAndPath("localsync", "offline_world_video")
+    };
     private static final int FULL_BRIGHT = 0xF000F0;
 
-    private static DynamicTexture mirrorTexture;
-    private static int mirrorWidth;
-    private static int mirrorHeight;
-    private static int readFramebuffer;
-    private static int lastLoggedSourceTexture;
-    private static boolean rendererFailed;
+    private static final DynamicTexture[] mirrorTextures = new DynamicTexture[2];
+    private static final int[] mirrorWidths = new int[2];
+    private static final int[] mirrorHeights = new int[2];
+    private static final int[] readFramebuffers = new int[2];
+    private static final int[] lastLoggedSourceTextures = new int[2];
+    private static final boolean[] rendererFailed = new boolean[2];
 
     private VideoOverlay() {
     }
@@ -36,30 +38,43 @@ public final class VideoOverlay {
         Minecraft client = Minecraft.getInstance();
         PlaybackSession session = PlaybackSession.instance();
         ScreenPayload screen = ScreenState.instance().screen();
-        if (client.level == null || !screen.active() || !session.hasVideoFrame()
+        renderSource(context, client, 0, screen, session.player(),
+            session.hasVideoFrame(), session.flipVertical());
+
+        OfflinePlaybackSession offline = OfflinePlaybackSession.instance();
+        ScreenPayload offlineScreen = OfflineScreenState.instance().screen();
+        renderSource(context, client, 1, offlineScreen, offline.player(),
+            offline.hasVideoFrame(), offline.flipVertical());
+    }
+
+    private static void renderSource(LevelRenderContext context, Minecraft client,
+                                     int slot, ScreenPayload screen, MediaPlayer player,
+                                     boolean hasVideoFrame, boolean flipVertical) {
+        if (client.level == null || !screen.active() || !hasVideoFrame
                 || !client.level.dimension().identifier().toString().equals(screen.dimension())) {
             return;
         }
-        MediaPlayer player = session.player();
         if (player == null || player.texture() <= 0L
-                || player.width() <= 0 || player.height() <= 0 || rendererFailed) {
+                || player.width() <= 0 || player.height() <= 0 || rendererFailed[slot]) {
             return;
         }
         try {
             RenderSystem.assertOnRenderThread();
             int sourceTexture = (int) player.texture();
-            copyFrame(client, sourceTexture, player.width(), player.height());
-            submitScreen(context, screen, player.width(), player.height(),
-                session.flipVertical());
-            if (sourceTexture != lastLoggedSourceTexture) {
-                lastLoggedSourceTexture = sourceTexture;
+            copyFrame(client, slot, sourceTexture, player.width(), player.height());
+            submitScreen(context, VIDEO_TEXTURES[slot], screen,
+                player.width(), player.height(), flipVertical);
+            if (sourceTexture != lastLoggedSourceTextures[slot]) {
+                lastLoggedSourceTextures[slot] = sourceTexture;
                 LocalSyncMod.LOGGER.info(
-                    "LocalSync submitted geometry: sourceTexture={} mirror={} size={}x{} screenRevision={}",
-                    sourceTexture, mirrorGlId(), player.width(), player.height(), screen.revision());
+                    "LocalSync submitted {} geometry: sourceTexture={} mirror={} size={}x{} screenRevision={}",
+                    slot == 0 ? "shared" : "offline", sourceTexture, mirrorGlId(slot),
+                    player.width(), player.height(), screen.revision());
             }
         } catch (Throwable error) {
-            rendererFailed = true;
-            LocalSyncMod.LOGGER.error("LocalSync world video renderer disabled", error);
+            rendererFailed[slot] = true;
+            LocalSyncMod.LOGGER.error("LocalSync {} video renderer disabled",
+                slot == 0 ? "shared" : "offline", error);
         }
     }
 
@@ -69,31 +84,33 @@ public final class VideoOverlay {
             client.execute(VideoOverlay::release);
             return;
         }
-        if (mirrorTexture != null) {
-            client.getTextureManager().release(VIDEO_TEXTURE);
-            mirrorTexture = null;
+        for (int slot = 0; slot < VIDEO_TEXTURES.length; slot++) {
+            if (mirrorTextures[slot] != null) {
+                client.getTextureManager().release(VIDEO_TEXTURES[slot]);
+                mirrorTextures[slot] = null;
+            }
+            if (readFramebuffers[slot] != 0) {
+                GL30C.glDeleteFramebuffers(readFramebuffers[slot]);
+                readFramebuffers[slot] = 0;
+            }
+            mirrorWidths[slot] = 0;
+            mirrorHeights[slot] = 0;
+            lastLoggedSourceTextures[slot] = 0;
+            rendererFailed[slot] = false;
         }
-        if (readFramebuffer != 0) {
-            GL30C.glDeleteFramebuffers(readFramebuffer);
-            readFramebuffer = 0;
-        }
-        mirrorWidth = 0;
-        mirrorHeight = 0;
-        lastLoggedSourceTexture = 0;
-        rendererFailed = false;
     }
 
-    private static void copyFrame(Minecraft client, int sourceTexture,
+    private static void copyFrame(Minecraft client, int slot, int sourceTexture,
                                   int width, int height) {
-        ensureMirror(client, width, height);
-        if (readFramebuffer == 0) {
-            readFramebuffer = GL30C.glGenFramebuffers();
+        ensureMirror(client, slot, width, height);
+        if (readFramebuffers[slot] == 0) {
+            readFramebuffers[slot] = GL30C.glGenFramebuffers();
         }
 
         int previousReadFramebuffer = GL11C.glGetInteger(GL30C.GL_READ_FRAMEBUFFER_BINDING);
         int previousTexture = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
         try {
-            GL30C.glBindFramebuffer(GL30C.GL_READ_FRAMEBUFFER, readFramebuffer);
+            GL30C.glBindFramebuffer(GL30C.GL_READ_FRAMEBUFFER, readFramebuffers[slot]);
             GL30C.glFramebufferTexture2D(GL30C.GL_READ_FRAMEBUFFER,
                 GL30C.GL_COLOR_ATTACHMENT0, GL11C.GL_TEXTURE_2D, sourceTexture, 0);
             int status = GL30C.glCheckFramebufferStatus(GL30C.GL_READ_FRAMEBUFFER);
@@ -103,7 +120,7 @@ public final class VideoOverlay {
                         + Integer.toHexString(status));
             }
             GL11C.glReadBuffer(GL30C.GL_COLOR_ATTACHMENT0);
-            GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, mirrorGlId());
+            GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, mirrorGlId(slot));
             GL11C.glCopyTexSubImage2D(GL11C.GL_TEXTURE_2D, 0,
                 0, 0, 0, 0, width, height);
         } finally {
@@ -114,24 +131,26 @@ public final class VideoOverlay {
         }
     }
 
-    private static void ensureMirror(Minecraft client, int width, int height) {
-        if (mirrorTexture != null && mirrorWidth == width && mirrorHeight == height) {
+    private static void ensureMirror(Minecraft client, int slot, int width, int height) {
+        if (mirrorTextures[slot] != null && mirrorWidths[slot] == width
+                && mirrorHeights[slot] == height) {
             return;
         }
-        if (mirrorTexture != null) {
-            client.getTextureManager().release(VIDEO_TEXTURE);
+        if (mirrorTextures[slot] != null) {
+            client.getTextureManager().release(VIDEO_TEXTURES[slot]);
         }
-        mirrorTexture = new LinearVideoTexture(width, height);
-        mirrorWidth = width;
-        mirrorHeight = height;
-        client.getTextureManager().register(VIDEO_TEXTURE, mirrorTexture);
+        mirrorTextures[slot] = new LinearVideoTexture(width, height);
+        mirrorWidths[slot] = width;
+        mirrorHeights[slot] = height;
+        client.getTextureManager().register(VIDEO_TEXTURES[slot], mirrorTextures[slot]);
         LocalSyncMod.LOGGER.info(
             "LocalSync mirror texture allocated: glId={} size={}x{}",
-            mirrorGlId(), width, height);
+            mirrorGlId(slot), width, height);
     }
 
-    private static int mirrorGlId() {
-        if (mirrorTexture == null || !(mirrorTexture.getTexture() instanceof GlTexture texture)) {
+    private static int mirrorGlId(int slot) {
+        if (mirrorTextures[slot] == null
+                || !(mirrorTextures[slot].getTexture() instanceof GlTexture texture)) {
             throw new IllegalStateException("Minecraft OpenGL mirror texture is unavailable");
         }
         return texture.glId();
@@ -144,7 +163,8 @@ public final class VideoOverlay {
         }
     }
 
-    private static void submitScreen(LevelRenderContext context, ScreenPayload screen,
+    private static void submitScreen(LevelRenderContext context, Identifier texture,
+                                     ScreenPayload screen,
                                      int videoWidth, int videoHeight,
                                      boolean flipVertical) {
         CameraRenderState camera = context.levelState().cameraRenderState;
@@ -170,7 +190,7 @@ public final class VideoOverlay {
         float bottomV = flipVertical ? 0f : 1f;
 
         context.submitNodeCollector().submitCustomGeometry(
-            context.poseStack(), RenderTypes.text(VIDEO_TEXTURE),
+            context.poseStack(), RenderTypes.text(texture),
             (pose, consumer) -> emitQuad(pose, consumer, screen, camera,
                 plane, left, right, yMin, yMax, topV, bottomV));
     }

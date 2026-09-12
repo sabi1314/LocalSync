@@ -36,7 +36,7 @@ final class BilibiliResolver {
     private static final Pattern BVID = Pattern.compile("(BV[0-9A-Za-z]+)");
     private static final Pattern PAGE = Pattern.compile("(?:[?&])p=(\\d+)");
     private static final int MAX_PROXY_HEADER_BYTES = 32 * 1024;
-    private static final Map<String, URI> SOURCES = new ConcurrentHashMap<>();
+    private static final Map<String, ProxySource> SOURCES = new ConcurrentHashMap<>();
     private static volatile MediaProxy proxy;
 
     private BilibiliResolver() {
@@ -105,6 +105,9 @@ final class BilibiliResolver {
     }
 
     static String resolveIfNeeded(String input) throws Exception {
+        if (BilibiliLiveResolver.isLiveInput(input)) {
+            return BilibiliLiveResolver.resolve(input);
+        }
         URI uri = URI.create(input);
         String host = uri.getHost();
         if (host == null) {
@@ -209,12 +212,17 @@ final class BilibiliResolver {
     }
 
     static URI createProxyUri(URI source) throws IOException {
+        return createProxyUri(source, "https://www.bilibili.com/");
+    }
+
+    static URI createProxyUri(URI source, String referer) throws IOException {
         if (source == null || !source.isAbsolute()) {
             throw new IllegalArgumentException("媒体源地址无效");
         }
         MediaProxy server = ensureProxy();
         String id = UUID.randomUUID().toString();
-        SOURCES.put(id, source);
+        SOURCES.put(id, new ProxySource(source,
+            referer == null || referer.isBlank() ? "https://www.bilibili.com/" : referer));
         return URI.create("http://127.0.0.1:" + server.port() + "/media/" + id);
     }
 
@@ -248,7 +256,7 @@ final class BilibiliResolver {
                 return;
             }
             String id = path.substring("/media/".length());
-            URI source = SOURCES.get(id);
+            ProxySource source = SOURCES.get(id);
             if (source == null) {
                 writeSimpleResponse(output, 404);
                 return;
@@ -256,10 +264,10 @@ final class BilibiliResolver {
 
             boolean responseStarted = false;
             try {
-            HttpRequest.Builder builder = HttpRequest.newBuilder(source)
+            HttpRequest.Builder builder = HttpRequest.newBuilder(source.uri())
                 .timeout(Duration.ofSeconds(30))
                 .header("User-Agent", USER_AGENT)
-                .header("Referer", "https://www.bilibili.com/")
+                .header("Referer", source.referer())
                 .header("Origin", "https://www.bilibili.com");
             String range = request.range();
             if (range != null && !range.isBlank()) {
@@ -380,6 +388,9 @@ final class BilibiliResolver {
     }
 
     private record ProxyRequest(String method, String path, String range) {
+    }
+
+    private record ProxySource(URI uri, String referer) {
     }
 
     private static final class MediaProxy {
